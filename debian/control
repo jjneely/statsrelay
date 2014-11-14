@@ -1,0 +1,16 @@
+Source: statsrelay
+Section: main
+Priority: optional
+Maintainer: Jack Neely <jjneely@42lines.net>
+Build-Depends: debhelper (>= 8.0.0)
+Standards-Version: 3.9.4
+Homepage: https://github.com/42Lines/statsrelay
+
+Package: statsrelay
+Architecture: all
+Depends: ${misc:Depends}
+Description: A consistent hashing proxy for Statsd
+ This is a proxy for Etsy's Statsd and compatible implementations.  Configure
+ this daemon to proxy for an array of Statsd daemons and it will use a
+ consistent hashing algorithm to load balance across the daemons
+ and always send the same metric name to the same Statsd.
