@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -46,6 +47,9 @@ var totalMetricsLock sync.Mutex
 // Time we began
 var epochTime int64
 
+// Verbose/Debug output
+var verbose bool
+
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
 func sockBufferMaxSize() int {
@@ -53,15 +57,14 @@ func sockBufferMaxSize() int {
 	// XXX: This is Linux-only most likely
 	data, err := ioutil.ReadFile("/proc/sys/net/core/rmem_max")
 	if err != nil {
-		panic(err)
+		log.Panicln(err)
 	}
 
 	data = bytes.TrimRight(data, "\n\r")
 	i, err := strconv.Atoi(string(data))
 	if err != nil {
-		fmt.Printf("Could not parse /proc/sys/net/core/rmem_max\n")
-		fmt.Println(err)
-		os.Exit(2)
+		log.Printf("Could not parse /proc/sys/net/core/rmem_max\n")
+		log.Fatalln(err)
 	}
 
 	return i
@@ -79,10 +82,9 @@ func getMetricName(metric []byte) string {
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
 func sendPacket(buff []byte, target string) {
-	//fmt.Printf("Packet Content: %s", string(buff))
 	conn, err := net.ListenUDP("udp", nil)
 	if err != nil {
-		panic(err)
+		log.Panicln(err)
 	}
 
 	conn.WriteToUDP(buff, udpAddr[target])
@@ -136,7 +138,7 @@ func handleBuff(buff []byte) {
 		}
 		target, err := hashRing.Get(getMetricName(buff[offset : offset+size]))
 		if err != nil {
-			panic(err)
+			log.Panicln(err)
 		}
 
 		// check built packet size and send if metric doesn't fit
@@ -167,7 +169,7 @@ func handleBuff(buff []byte) {
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
 	target, err := hashRing.Get(statsMetric)
 	if err != nil {
-		panic(err)
+		log.Panicln(err)
 	}
 	if packets[target].Len()+len(stats) > packetLen {
 		sendPacket(packets[target].Bytes(), target)
@@ -182,9 +184,11 @@ func handleBuff(buff []byte) {
 		}
 	}
 
-	fmt.Printf("Procssed %d metrics. Running total: %d. Metrics/sec: %d\n",
-		numMetrics, totalMetrics,
-		int64(totalMetrics)/(time.Now().Unix()-epochTime))
+	if verbose {
+		log.Printf("Procssed %d metrics. Running total: %d. Metrics/sec: %d\n",
+			numMetrics, totalMetrics,
+			int64(totalMetrics)/(time.Now().Unix()-epochTime))
+	}
 }
 
 // readUDP() a goroutine that just reads data off of a UDP socket and fills
@@ -198,29 +202,29 @@ func readUDP(ip string, port int, c chan []byte) {
 		IP:   net.ParseIP(ip),
 	}
 
-	fmt.Printf("Listening on %s:%d\n", ip, port)
+	log.Printf("Listening on %s:%d\n", ip, port)
 	sock, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		fmt.Printf("Error opening UDP socket.\n")
-		fmt.Println(err)
-		os.Exit(2)
+		log.Printf("Error opening UDP socket.\n")
+		log.Fatalln(err)
 	}
 	defer sock.Close()
 
-	fmt.Printf("Setting socket read buffer size to: %d\n", sockBufferMaxSize())
+	log.Printf("Setting socket read buffer size to: %d\n", sockBufferMaxSize())
 	err = sock.SetReadBuffer(sockBufferMaxSize())
 	if err != nil {
-		fmt.Printf("Unable to set read buffer size on socket.  Non-fatal.")
-		fmt.Println(err)
+		log.Printf("Unable to set read buffer size on socket.  Non-fatal.")
+		log.Println(err)
 	}
 	err = sock.SetDeadline(time.Now().Add(time.Second))
 	if err != nil {
-		fmt.Printf("Unable to set timeout on socket.\n")
-		fmt.Println(err)
-		os.Exit(2)
+		log.Printf("Unable to set timeout on socket.\n")
+		log.Fatalln(err)
 	}
 
-	fmt.Printf("Rock and Roll!\n")
+	if verbose {
+		log.Printf("Rock and Roll!\n")
+	}
 	for {
 		if buff == nil {
 			buff = new([BUFFERSIZE]byte)
@@ -236,10 +240,10 @@ func readUDP(ip string, port int, c chan []byte) {
 			timeout = true
 			err = sock.SetDeadline(time.Now().Add(time.Second))
 			if err != nil {
-				panic(err)
+				log.Panicln(err)
 			}
 		} else {
-			fmt.Printf("Read Error: %s\n", err)
+			log.Printf("Read Error: %s\n", err)
 			continue
 		}
 
@@ -271,8 +275,8 @@ func runServer(host string, port int) {
 			//fmt.Printf("Handling %d length buffer...\n", len(buff))
 			go handleBuff(buff)
 		case <-sig:
-			fmt.Printf("Signal received.  Shutting down...\n")
-			fmt.Printf("Received %d metrics.\n", totalMetrics)
+			log.Printf("Signal received.  Shutting down...\n")
+			log.Printf("Received %d metrics.\n", totalMetrics)
 			return
 		}
 	}
@@ -290,11 +294,13 @@ func main() {
 
 	flag.StringVar(&prefix, "prefix", "statsrelay", "The prefix to use with self generated stats")
 
+	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
+	flag.BoolVar(&verbose, "v", false, "Verbose output")
+
 	flag.Parse()
 
 	if len(flag.Args()) == 0 {
-		fmt.Printf("One or most host specifications are needed to locate statsd daemons.\n")
-		os.Exit(1)
+		log.Fatalf("One or most host specifications are needed to locate statsd daemons.\n")
 	}
 
 	hashRing = consistent.New()
@@ -307,26 +313,22 @@ func main() {
 
 		switch len(host) {
 		case 1:
-			fmt.Printf("Invalid statsd location: %s\n", v)
-			fmt.Printf("Must be of the form HOST:PORT or HOST:PORT:INSTANCE\n")
-			os.Exit(1)
+			log.Printf("Invalid statsd location: %s\n", v)
+			log.Fatalf("Must be of the form HOST:PORT or HOST:PORT:INSTANCE\n")
 		case 2:
 			addr, err = net.ResolveUDPAddr("udp", v)
 			if err != nil {
-				fmt.Printf("Error parsing HOST:PORT \"%s\"\n", v)
-				fmt.Printf("%s\n", err.Error())
-				os.Exit(1)
+				log.Printf("Error parsing HOST:PORT \"%s\"\n", v)
+				log.Fatalf("%s\n", err.Error())
 			}
 		case 3:
 			addr, err = net.ResolveUDPAddr("udp", host[0]+":"+host[1])
 			if err != nil {
-				fmt.Printf("Error parsing HOST:PORT:INSTANCE \"%s\"\n", v)
-				fmt.Printf("%s\n", err.Error())
-				os.Exit(1)
+				log.Printf("Error parsing HOST:PORT:INSTANCE \"%s\"\n", v)
+				log.Fatalf("%s\n", err.Error())
 			}
 		default:
-			fmt.Printf("Unrecongnized host specification: %s\n", v)
-			os.Exit(1)
+			log.Fatalf("Unrecongnized host specification: %s\n", v)
 		}
 
 		if addr != nil {
@@ -338,5 +340,5 @@ func main() {
 	epochTime = time.Now().Unix()
 	runServer(bindAddress, port)
 
-	fmt.Printf("Done!\n")
+	log.Printf("Normal shutdown.\n")
 }
