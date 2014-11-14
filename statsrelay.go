@@ -43,6 +43,9 @@ var totalMetrics int = 0
 // totalMetricsLock is a mutex gaurding totalMetrics
 var totalMetricsLock sync.Mutex
 
+// Time we began
+var epochTime int64
+
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
 func sockBufferMaxSize() int {
@@ -179,7 +182,9 @@ func handleBuff(buff []byte) {
 		}
 	}
 
-	fmt.Printf("Procssed %d metrics.  Running total: %d\n", numMetrics, totalMetrics)
+	fmt.Printf("Procssed %d metrics. Running total: %d. Metrics/sec: %d\n",
+		numMetrics, totalMetrics,
+		int64(totalMetrics)/(time.Now().Unix()-epochTime))
 }
 
 // readUDP() a goroutine that just reads data off of a UDP socket and fills
@@ -330,6 +335,7 @@ func main() {
 		}
 	}
 
+	epochTime = time.Now().Unix()
 	runServer(bindAddress, port)
 
 	fmt.Printf("Done!\n")
