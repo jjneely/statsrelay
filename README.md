@@ -44,3 +44,42 @@ This package depends on the `consistent` Go package written by StatHat.
 
 Memory management in Go 1.3 is far superior to 1.2 for this program.
 Building under 1.3 is highly recommended.
+
+My Use Case
+-----------
+
+I run a Statsd service for a large collection of in-house web apps.  There are
+metrics generated per host -- where you would usually run a local statsd daemon
+to deal with high load.  But most of my metrics are application specific and
+not host specific.  So running local statsd daemons means they would each
+submit the same metrics to Graphite resulting in corrupt data in Graphite.
+Instead, I run a single Statsd service scaled to handle more than 800,000
+incoming statsd metrics per second.
+
+I do this using LVS/IPVS to create a UDP load balancer.  You'll want to use
+a new enough kernel and ipvsadm tool to have the --ops command which treats
+each incoming UDP packet as its own "connection" and routes each independently.
+
+    ipvsadm -A -u 10.0.0.222:9125 -s wlc -o
+
+Then add your real servers that run identically configured StatsRelay daemons
+to the LVS service:
+
+    ipvsadm -a -u 10.0.0.222:9125 -r 10.0.0.156:9125 -g -w 100
+    ...
+
+I run Etsy's statsd daemon on the same machines as I run StatsRelay.  I can
+simply add more machines to the LVS pool for more throughput.  My incantation
+for StatsRelay looks something like this upstart job.  (A Puppet ERB template.)
+
+    description "StatsRelay statsd proxy on port 9125"
+    author      "Jack Neely <jjneely@42lines.net>"
+
+    start on startup
+    stop on shutdown
+
+    setuid nobody
+
+    exec /usr/bin/statsrelay --port 9125 --bind 0.0.0.0 \
+        --prefix statsrelay.<%= @hostname %> \
+	<%= @dest.join(" \\\n    ") %>
