@@ -136,6 +136,11 @@ func handleBuff(buff []byte) {
 			// last metric in buffer
 			size = len(buff) - offset
 		}
+		if size == 0 {
+			// no more metrics
+			break
+		}
+
 		target, err := hashRing.Get(getMetricName(buff[offset : offset+size]))
 		if err != nil {
 			log.Panicln(err)
