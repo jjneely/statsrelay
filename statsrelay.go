@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-import "github.com/stathat/consistent"
+import "stathat.com/c/consistent"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
