@@ -251,7 +251,7 @@ func readUDP(ip string, port int, c chan []byte) {
 		}
 
 		i, err := sock.Read(buff[offset:])
-		if err != nil {
+		if err == nil {
 				buff[offset+i] = '\n'
 				offset = offset + i + 1		
 		} else if err.(net.Error).Timeout() {
