@@ -149,7 +149,7 @@ func handleBuff(buff []byte) {
         //Check to ensure we get a metric, and not an invalid Byte sequence
 		metric, err := getMetricName(buff[offset : offset+size])
 
-        if (err != nil) {
+        if (err == nil) {
 
         	target, err := hashRing.Get(metric)
         	if err != nil {
