@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"errors"
 )
 
 import "stathat.com/c/consistent"
@@ -73,11 +73,11 @@ func sockBufferMaxSize() int {
 
 // getMetricName() parses the given []byte metric as a string, extracts
 // the metric key name and returns it as a string.
-func getMetricName(metric []byte) (string,error) {
+func getMetricName(metric []byte) (string, error) {
 	// statsd metrics are of the form:
 	//    KEY:VALUE|TYPE|RATE
 	length := bytes.IndexByte(metric, byte(':'))
-	if (length == -1) {
+	if length == -1 {
 		return "error", errors.New("Length of -1, must be invalid StatsD data")
 	}
 	return string(metric[:length]), nil
@@ -146,28 +146,27 @@ func handleBuff(buff []byte) {
 			break
 		}
 
-        //Check to ensure we get a metric, and not an invalid Byte sequence
+		//Check to ensure we get a metric, and not an invalid Byte sequence
 		metric, err := getMetricName(buff[offset : offset+size])
 
-        if (err == nil) {
+		if err == nil {
 
-        	target, err := hashRing.Get(metric)
-        	if err != nil {
-        		log.Panicln(err)
-        	}
-
+			target, err := hashRing.Get(metric)
+			if err != nil {
+				log.Panicln(err)
+			}
 
 			// check built packet size and send if metric doesn't fit
-        	if packets[target].Len()+size > packetLen {
-        		sendPacket(packets[target].Bytes(), target)
-        		packets[target].Reset()
-        	}
+			if packets[target].Len()+size > packetLen {
+				sendPacket(packets[target].Bytes(), target)
+				packets[target].Reset()
+			}
 			// add to packet
-        	packets[target].Write(buff[offset : offset+size])
-        	packets[target].Write(sep)
+			packets[target].Write(buff[offset : offset+size])
+			packets[target].Write(sep)
 
-        	numMetrics++
-	    }
+			numMetrics++
+		}
 
 		offset = offset + size + 1
 	}
