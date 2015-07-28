@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -72,11 +73,14 @@ func sockBufferMaxSize() int {
 
 // getMetricName() parses the given []byte metric as a string, extracts
 // the metric key name and returns it as a string.
-func getMetricName(metric []byte) string {
+func getMetricName(metric []byte) (string, error) {
 	// statsd metrics are of the form:
 	//    KEY:VALUE|TYPE|RATE
 	length := bytes.IndexByte(metric, byte(':'))
-	return string(metric[:length])
+	if length == -1 {
+		return "error", errors.New("Length of -1, must be invalid StatsD data")
+	}
+	return string(metric[:length]), nil
 }
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
@@ -132,6 +136,7 @@ func handleBuff(buff []byte) {
 		}
 
 		size := bytes.IndexByte(buff[offset:], '\n')
+
 		if size == -1 {
 			// last metric in buffer
 			size = len(buff) - offset
@@ -141,21 +146,28 @@ func handleBuff(buff []byte) {
 			break
 		}
 
-		target, err := hashRing.Get(getMetricName(buff[offset : offset+size]))
-		if err != nil {
-			log.Panicln(err)
+		//Check to ensure we get a metric, and not an invalid Byte sequence
+		metric, err := getMetricName(buff[offset : offset+size])
+
+		if err == nil {
+
+			target, err := hashRing.Get(metric)
+			if err != nil {
+				log.Panicln(err)
+			}
+
+			// check built packet size and send if metric doesn't fit
+			if packets[target].Len()+size > packetLen {
+				sendPacket(packets[target].Bytes(), target)
+				packets[target].Reset()
+			}
+			// add to packet
+			packets[target].Write(buff[offset : offset+size])
+			packets[target].Write(sep)
+
+			numMetrics++
 		}
 
-		// check built packet size and send if metric doesn't fit
-		if packets[target].Len()+size > packetLen {
-			sendPacket(packets[target].Bytes(), target)
-			packets[target].Reset()
-		}
-		// add to packet
-		packets[target].Write(buff[offset : offset+size])
-		packets[target].Write(sep)
-
-		numMetrics++
 		offset = offset + size + 1
 	}
 
