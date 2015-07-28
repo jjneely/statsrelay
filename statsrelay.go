@@ -305,7 +305,7 @@ func main() {
 	flag.Parse()
 
 	if len(flag.Args()) == 0 {
-		log.Fatalf("One or most host specifications are needed to locate statsd daemons.\n")
+		log.Fatalf("One or more host specifications are needed to locate statsd daemons.\n")
 	}
 
 	hashRing = consistent.New()
