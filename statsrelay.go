@@ -155,6 +155,9 @@ func handleBuff(buff []byte) {
 			if err != nil {
 				log.Panicln(err)
 			}
+			if verbose {
+				log.Printf("Sending %s to %s", metric, target)
+			}
 
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
