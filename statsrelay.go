@@ -36,6 +36,9 @@ var prefix string
 // udpAddr is a mapping of HOST:PORT:INSTANCE to a UDPAddr object
 var udpAddr = make(map[string]*net.UDPAddr)
 
+// tcpAddr is a mapping of HOST:PORT:INSTANCE to a TCPAddr object
+var tcpAddr = make(map[string]*net.TCPAddr)
+
 // hashRing is our consistent hashing ring.
 var hashRing *consistent.Consistent
 
@@ -50,6 +53,9 @@ var epochTime int64
 
 // Verbose/Debug output
 var verbose bool
+
+// IP protocol set for sending data target
+var sendproto string
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -85,14 +91,27 @@ func getMetricName(metric []byte) (string, error) {
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, target string) {
-	conn, err := net.ListenUDP("udp", nil)
-	if err != nil {
-		log.Panicln(err)
+func sendPacket(buff []byte, target string, sendproto string) {
+	if sendproto == "UDP" {
+		conn, err := net.ListenUDP("udp", nil)
+		if err != nil {
+			log.Panicln(err)
+		}
+		conn.WriteToUDP(buff, udpAddr[target])
+		conn.Close()
+	} else if sendproto == "TCP" {
+		tcpAddr, err := net.ResolveTCPAddr("tcp", target)
+		if err != nil {
+			log.Fatalf("ResolveTCPAddr Failed %s\n", err.Error())
+		}
+		conn, err := net.DialTCP("tcp", nil, tcpAddr)
+		if err != nil {
+			log.Panicln(err)
+		}
+		conn.Write(buff)
+		conn.Close()
 	}
 
-	conn.WriteToUDP(buff, udpAddr[target])
-	conn.Close()
 }
 
 // buildPacketMap() is a helper function to initiallize a map that represents
@@ -161,7 +180,7 @@ func handleBuff(buff []byte) {
 
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				sendPacket(packets[target].Bytes(), target)
+				sendPacket(packets[target].Bytes(), target, sendproto)
 				packets[target].Reset()
 			}
 			// add to packet
@@ -192,7 +211,7 @@ func handleBuff(buff []byte) {
 		log.Panicln(err)
 	}
 	if packets[target].Len()+len(stats) > packetLen {
-		sendPacket(packets[target].Bytes(), target)
+		sendPacket(packets[target].Bytes(), target, sendproto)
 		packets[target].Reset()
 	}
 	packets[target].Write([]byte(stats))
@@ -200,7 +219,7 @@ func handleBuff(buff []byte) {
 	// Empty out any remaining data
 	for _, target := range hashRing.Members() {
 		if packets[target].Len() > 0 {
-			sendPacket(packets[target].Bytes(), target)
+			sendPacket(packets[target].Bytes(), target, sendproto)
 		}
 	}
 
@@ -316,6 +335,8 @@ func main() {
 
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
+
+	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data - TCP or UDP")
 
 	flag.Parse()
 
