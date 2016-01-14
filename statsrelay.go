@@ -271,7 +271,7 @@ func readUDP(ip string, port int, c chan []byte) {
 			timeout = false
 		}
 
-		i, err := sock.Read(buff[offset:])
+		i, err := sock.Read(buff[offset : BUFFERSIZE-1])
 		if err == nil {
 			buff[offset+i] = '\n'
 			offset = offset + i + 1
@@ -287,7 +287,7 @@ func readUDP(ip string, port int, c chan []byte) {
 		}
 
 		if offset > BUFFERSIZE-4096 || timeout {
-			// Approching make buff size
+			// Approaching make buff size
 			// we use a 4KiB margin
 			c <- buff[:offset]
 			buff = nil
@@ -305,7 +305,7 @@ func runServer(host string, port int) {
 	var sig chan os.Signal = make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)
 
-	// read incming UDP packets
+	// read incoming UDP packets
 	go readUDP(host, port, c)
 
 	for {
