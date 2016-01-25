@@ -76,7 +76,7 @@ to the LVS service:
     ipvsadm -a -u 10.0.0.222:9125 -r 10.0.0.156:9125 -g -w 100
     ...
 
-I use Keepalved[1] for the details here.
+I use [Keepalved][1] for the details here.
 
 I run [Etsy's statsd][2] daemon on a pool of machines and StatsRelay on a much
 smaller pool.  I can simply add more machines to the pools for more
