@@ -16,8 +16,6 @@ import (
 	"time"
 )
 
-import "stathat.com/c/consistent"
-
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
 // characters.  This buffer is passed to a handler to proxy out the metrics
@@ -40,7 +38,7 @@ var udpAddr = make(map[string]*net.UDPAddr)
 var tcpAddr = make(map[string]*net.TCPAddr)
 
 // hashRing is our consistent hashing ring.
-var hashRing *consistent.Consistent
+var hashRing = NewJumpHashRing(1)
 
 // totalMetrics tracks the totall number of metrics processed
 var totalMetrics int = 0
@@ -92,14 +90,15 @@ func getMetricName(metric []byte) (string, error) {
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
 func sendPacket(buff []byte, target string, sendproto string) {
-	if sendproto == "UDP" {
+	switch sendproto {
+	case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
 		if err != nil {
 			log.Panicln(err)
 		}
 		conn.WriteToUDP(buff, udpAddr[target])
 		conn.Close()
-	} else if sendproto == "TCP" {
+	case "TCP":
 		tcpAddr, err := net.ResolveTCPAddr("tcp", target)
 		if err != nil {
 			log.Fatalf("ResolveTCPAddr Failed %s\n", err.Error())
@@ -110,21 +109,24 @@ func sendPacket(buff []byte, target string, sendproto string) {
 		}
 		conn.Write(buff)
 		conn.Close()
+	case "TEST":
+		// A test no-op
+	default:
+		log.Fatalf("Illegal send protocol %s", sendproto)
 	}
-
 }
 
-// buildPacketMap() is a helper function to initiallize a map that represents
+// buildPacketMap() is a helper function to initialize a map that represents
 // a UDP packet currently being built for each destination we proxy to.  As
 // Go forbids taking the address of an object in a map or array so the
 // bytes.Buffer object must be stored in the map as a pointer rather than
 // a direct object in order to call the pointer methods on it.
 func buildPacketMap() map[string]*bytes.Buffer {
-	members := hashRing.Members()
+	members := hashRing.Nodes()
 	hash := make(map[string]*bytes.Buffer, len(members))
 
-	for _, v := range members {
-		hash[v] = new(bytes.Buffer)
+	for _, n := range members {
+		hash[n.Server] = new(bytes.Buffer)
 	}
 
 	return hash
@@ -165,15 +167,12 @@ func handleBuff(buff []byte) {
 			break
 		}
 
-		//Check to ensure we get a metric, and not an invalid Byte sequence
+		// Check to ensure we get a metric, and not an invalid Byte sequence
 		metric, err := getMetricName(buff[offset : offset+size])
 
 		if err == nil {
 
-			target, err := hashRing.Get(metric)
-			if err != nil {
-				log.Panicln(err)
-			}
+			target := hashRing.GetNode(metric).Server
 			if verbose {
 				log.Printf("Sending %s to %s", metric, target)
 			}
@@ -199,17 +198,14 @@ func handleBuff(buff []byte) {
 		return
 	}
 
-	// Update interal counter
+	// Update internal counter
 	totalMetricsLock.Lock()
 	totalMetrics = totalMetrics + numMetrics
 	totalMetricsLock.Unlock()
 
 	// Handle reporting our own stats
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
-	target, err := hashRing.Get(statsMetric)
-	if err != nil {
-		log.Panicln(err)
-	}
+	target := hashRing.GetNode(statsMetric).Server
 	if packets[target].Len()+len(stats) > packetLen {
 		sendPacket(packets[target].Bytes(), target, sendproto)
 		packets[target].Reset()
@@ -217,13 +213,13 @@ func handleBuff(buff []byte) {
 	packets[target].Write([]byte(stats))
 
 	// Empty out any remaining data
-	for _, target := range hashRing.Members() {
-		if packets[target].Len() > 0 {
-			sendPacket(packets[target].Bytes(), target, sendproto)
+	for _, target := range hashRing.Nodes() {
+		if packets[target.Server].Len() > 0 {
+			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto)
 		}
 	}
 
-	if verbose {
+	if verbose && time.Now().Unix()-epochTime > 0 {
 		log.Printf("Procssed %d metrics. Running total: %d. Metrics/sec: %d\n",
 			numMetrics, totalMetrics,
 			int64(totalMetrics)/(time.Now().Unix()-epochTime))
@@ -344,9 +340,6 @@ func main() {
 		log.Fatalf("One or more host specifications are needed to locate statsd daemons.\n")
 	}
 
-	hashRing = consistent.New()
-	hashRing.NumberOfReplicas = 1
-
 	for _, v := range flag.Args() {
 		var addr *net.UDPAddr
 		var err error
@@ -374,7 +367,7 @@ func main() {
 
 		if addr != nil {
 			udpAddr[v] = addr
-			hashRing.Add(v)
+			hashRing.AddNode(Node{v, ""})
 		}
 	}
 
