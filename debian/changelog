@@ -1,3 +1,11 @@
+statsrelay (0.0.2) unstable; urgency=medium
+
+  * Build with Go 1.5
+  * Use Google's Jump Hash / FNV1a to better balance traffic across
+    statsd daemons
+
+ -- Jack Neely <jjneely@42lines.net>  Mon, 25 Jan 2016 11:02:13 -0500
+
 statsrelay (0.0.1) unstable; urgency=low
 
   * Initial Release.

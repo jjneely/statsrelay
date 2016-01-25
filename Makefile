@@ -8,16 +8,16 @@
 # must run.  XXX: This means the DEB packages are broken.
 
 # Nothing done here, we don't compile in the DSC build process
-all:
+all: statsrelay
 
-statsrelay: statsrelay.go
-	go build -o statsrelay statsrelay.go
+statsrelay: statsrelay.go jump.go
+	go build
 
 install:
 	install -D -m 0755 statsrelay $(DESTDIR)/usr/bin/statsrelay
 
-dsc: statsrelay
+dsc:
 	dpkg-source -b .
 
 clean:
-	rm -f *~
+	rm -f *~ statsrelay

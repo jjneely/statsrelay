@@ -2,7 +2,7 @@ Source: statsrelay
 Section: main
 Priority: optional
 Maintainer: Jack Neely <jjneely@42lines.net>
-Build-Depends: debhelper (>= 8.0.0)
+Build-Depends: debhelper (>= 8.0.0), golang (>= 1.5), dh-golang
 Standards-Version: 3.9.4
 Homepage: https://github.com/42Lines/statsrelay
 
