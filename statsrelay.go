@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -55,24 +56,27 @@ var verbose bool
 // IP protocol set for sending data target
 var sendproto string
 
+// Maximum size of buffer
+var bufferMaxSize int
+
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
-func sockBufferMaxSize() int {
+func getSockBufferMaxSize() (int, error) {
 
 	// XXX: This is Linux-only most likely
 	data, err := ioutil.ReadFile("/proc/sys/net/core/rmem_max")
 	if err != nil {
-		log.Panicln(err)
+		return -1, err
 	}
 
 	data = bytes.TrimRight(data, "\n\r")
 	i, err := strconv.Atoi(string(data))
 	if err != nil {
 		log.Printf("Could not parse /proc/sys/net/core/rmem_max\n")
-		log.Fatalln(err)
+		return -1, err
 	}
 
-	return i
+	return i, nil
 }
 
 // getMetricName() parses the given []byte metric as a string, extracts
@@ -245,8 +249,8 @@ func readUDP(ip string, port int, c chan []byte) {
 	}
 	defer sock.Close()
 
-	log.Printf("Setting socket read buffer size to: %d\n", sockBufferMaxSize())
-	err = sock.SetReadBuffer(sockBufferMaxSize())
+	log.Printf("Setting socket read buffer size to: %d\n", bufferMaxSize)
+	err = sock.SetReadBuffer(bufferMaxSize)
 	if err != nil {
 		log.Printf("Unable to set read buffer size on socket.  Non-fatal.")
 		log.Println(err)
@@ -299,7 +303,7 @@ func runServer(host string, port int) {
 	// We must use a buffered channel or risk missing the signal
 	// if we're not ready to receive when the signal is sent.
 	var sig chan os.Signal = make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, os.Kill)
+	signal.Notify(sig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
 	// read incoming UDP packets
 	go readUDP(host, port, c)
@@ -333,6 +337,13 @@ func main() {
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data - TCP or UDP")
+
+	defaultBufferSize, err := getSockBufferMaxSize()
+	if err != nil {
+		defaultBufferSize = 32 * 1024
+	}
+
+	flag.IntVar(&bufferMaxSize, "bufsize", defaultBufferSize, "Read buffer size")
 
 	flag.Parse()
 
