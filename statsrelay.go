@@ -16,16 +16,13 @@ import (
 	"time"
 )
 
+const VERSION string = "0.0.3"
+
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
 // characters.  This buffer is passed to a handler to proxy out the metrics
 // to the real statsd daemons.
 const BUFFERSIZE int = 1 * 1024 * 1024 // 1MiB
-
-// packetLen is the size in bytes of data we stuff into one packet before
-// sending it to statsd.  This must be lower than the MTU, IPv4 header size
-// and UDP header size.
-const packetLen int = 1000
 
 // prefix is the string that will be prefixed onto self generated stats.
 // Such as <prefix>.statsProcessed.  Default is "statsrelay"
@@ -54,6 +51,11 @@ var verbose bool
 
 // IP protocol set for sending data target
 var sendproto string
+
+// packetLen is the size in bytes of data we stuff into one packet before
+// sending it to statsd. This must be lower than the MTU, IPv4 header size
+// and UDP header size to avoid fragmentation and data loss.
+var packetLen int
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -237,6 +239,7 @@ func readUDP(ip string, port int, c chan []byte) {
 		IP:   net.ParseIP(ip),
 	}
 
+	log.Printf("Starting version %s", VERSION)
 	log.Printf("Listening on %s:%d\n", ip, port)
 	sock, err := net.ListenUDP("udp", &addr)
 	if err != nil {
@@ -333,6 +336,7 @@ func main() {
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data - TCP or UDP")
+	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
 
 	flag.Parse()
 
