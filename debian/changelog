@@ -1,3 +1,10 @@
+statsrelay (0.0.4) unstable; urgency=medium
+
+  * Build with Go 1.7.3
+  * Add TCP send proto timeout support and connection refused handling
+
+ -- Slawomir Skowron <sziszibis@gmail.com>  Wed, 30 Nov 2016 17:39:13 +0200
+
 statsrelay (0.0.2) unstable; urgency=medium
 
   * Build with Go 1.5

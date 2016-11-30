@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION string = "0.0.3"
+const VERSION string = "0.0.4"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
