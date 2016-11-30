@@ -61,6 +61,9 @@ var packetLen int
 // Maximum size of buffer
 var bufferMaxSize int
 
+// Timeout value for remote TCP connection
+var TCPtimeout int
+
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
 func getSockBufferMaxSize() (int, error) {
@@ -95,7 +98,7 @@ func getMetricName(metric []byte) (string, error) {
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, target string, sendproto string) {
+func sendPacket(buff []byte, target string, sendproto string, TCPtimeout int) {
 	switch sendproto {
 	case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
@@ -109,9 +112,10 @@ func sendPacket(buff []byte, target string, sendproto string) {
 		if err != nil {
 			log.Fatalf("ResolveTCPAddr Failed %s\n", err.Error())
 		}
-		conn, err := net.DialTCP("tcp", nil, tcpAddr)
-		if err != nil {
-			log.Panicln(err)
+		conn, err := net.DialTimeout("tcp", target, time.Duration(TCPtimeout)*time.Second)
+		if e, ok := err.(net.Error); ok && e.Timeout() {
+			log.Printf("TCP timeout for %s - %s\n", tcpAddr, e)
+			break
 		}
 		conn.Write(buff)
 		conn.Close()
@@ -185,7 +189,7 @@ func handleBuff(buff []byte) {
 
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				sendPacket(packets[target].Bytes(), target, sendproto)
+				sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
 				packets[target].Reset()
 			}
 			// add to packet
@@ -213,7 +217,7 @@ func handleBuff(buff []byte) {
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
 	target := hashRing.GetNode(statsMetric).Server
 	if packets[target].Len()+len(stats) > packetLen {
-		sendPacket(packets[target].Bytes(), target, sendproto)
+		sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
 		packets[target].Reset()
 	}
 	packets[target].Write([]byte(stats))
@@ -221,7 +225,7 @@ func handleBuff(buff []byte) {
 	// Empty out any remaining data
 	for _, target := range hashRing.Nodes() {
 		if packets[target.Server].Len() > 0 {
-			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto)
+			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto, TCPtimeout)
 		}
 	}
 
@@ -341,6 +345,9 @@ func main() {
 
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data - TCP or UDP")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
+
+	flag.IntVar(&TCPtimeout, "tcptimeout", 1, "Timeout for TCP remote connections")
+	flag.IntVar(&TCPtimeout, "t", 1, "Timeout for TCP remote connections")
 
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {
