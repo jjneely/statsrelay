@@ -62,7 +62,7 @@ var packetLen int
 var bufferMaxSize int
 
 // Timeout value for remote TCP connection
-var TCPtimeout int
+var TCPtimeout time.Duration
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -98,7 +98,7 @@ func getMetricName(metric []byte) (string, error) {
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, target string, sendproto string, TCPtimeout int) {
+func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Duration) {
 	switch sendproto {
 	case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
@@ -112,7 +112,7 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout int) {
 		if err != nil {
 			log.Fatalf("ResolveTCPAddr Failed %s\n", err.Error())
 		}
-		conn, err := net.DialTimeout("tcp", target, time.Duration(TCPtimeout)*time.Second)
+		conn, err := net.DialTimeout("tcp", target, TCPtimeout)
 		if e, ok := err.(net.Error); ok && e.Timeout() {
 			log.Printf("TCP timeout for %s - %s\n", tcpAddr, e)
 			break
@@ -268,9 +268,15 @@ func readUDP(ip string, port int, c chan []byte) {
 		log.Fatalln(err)
 	}
 
+	if sendproto == "TCP" {
+		log.Printf("TCP send timeout %s", TCPtimeout)
+
+	}
+
 	if verbose {
 		log.Printf("Rock and Roll!\n")
 	}
+
 	for {
 		if buff == nil {
 			buff = new([BUFFERSIZE]byte)
@@ -346,8 +352,8 @@ func main() {
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data - TCP or UDP")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
 
-	flag.IntVar(&TCPtimeout, "tcptimeout", 1, "Timeout for TCP remote connections")
-	flag.IntVar(&TCPtimeout, "t", 1, "Timeout for TCP remote connections")
+	flag.DurationVar(&TCPtimeout, "tcptimeout", 1*time.Second, "Timeout for TCP client remote connections")
+	flag.DurationVar(&TCPtimeout, "t", 1*time.Second, "Timeout for TCP client remote connections")
 
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {
