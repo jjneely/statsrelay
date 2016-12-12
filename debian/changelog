@@ -1,9 +1,15 @@
+statsrelay (0.0.5) unstable; urgency=medium
+
+  * Add forwarded metrics prefix
+
+ -- Slawomir Skowron <slawomir.skowron@gmail.com>  Mon, 12 Dec 2016 22:05:13 +0100
+
 statsrelay (0.0.4) unstable; urgency=medium
 
   * Build with Go 1.7.3
   * Add TCP send proto timeout support and connection refused handling
 
- -- Slawomir Skowron <sziszibis@gmail.com>  Wed, 30 Nov 2016 17:39:13 +0200
+ -- Slawomir Skowron <slawomir.skowron@gmail.com>  Wed, 30 Nov 2016 17:39:13 +0200
 
 statsrelay (0.0.2) unstable; urgency=medium
 

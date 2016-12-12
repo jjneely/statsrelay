@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION string = "0.0.4"
+const VERSION string = "0.0.5"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
@@ -28,6 +28,12 @@ const BUFFERSIZE int = 1 * 1024 * 1024 // 1MiB
 // prefix is the string that will be prefixed onto self generated stats.
 // Such as <prefix>.statsProcessed.  Default is "statsrelay"
 var prefix string
+
+// prefix is the string that will be prefixed onto each metric passed
+// through statsrelay. This is especialy usefull with docker passing
+// env, appname automatic from docker environment to app metri
+// Such as <metricsPrefix>.mytest.service.metric.count  Default is empty
+var metricsPrefix string
 
 // udpAddr is a mapping of HOST:PORT:INSTANCE to a UDPAddr object
 var udpAddr = make(map[string]*net.UDPAddr)
@@ -64,6 +70,9 @@ var bufferMaxSize int
 // Timeout value for remote TCP connection
 var TCPtimeout time.Duration
 
+// buffer with prefix added to metric
+var buffPrefix []byte
+
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
 func getSockBufferMaxSize() (int, error) {
@@ -88,12 +97,33 @@ func getSockBufferMaxSize() (int, error) {
 // the metric key name and returns it as a string.
 func getMetricName(metric []byte) (string, error) {
 	// statsd metrics are of the form:
-	//    KEY:VALUE|TYPE|RATE
+	//    KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
+	var metricName string
 	length := bytes.IndexByte(metric, byte(':'))
 	if length == -1 {
 		return "error", errors.New("Length of -1, must be invalid StatsD data")
 	}
-	return string(metric[:length]), nil
+	if len(metricsPrefix) != 0 {
+		metricName = genPrefix(metric[:length], metricsPrefix)
+	} else {
+		metricName = string(metric[:length])
+	}
+	return metricName, nil
+}
+
+func genPrefix(metric []byte, metricsPrefix string) string {
+	return metricsPrefix + "." + string(metric)
+}
+
+func addPrefix(metric []byte, metricsPrefix string) []byte {
+	// statsd metrics are of the form:
+	//    KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
+	length := bytes.IndexByte(metric, byte(':'))
+	if length == -1 {
+		return []byte("error")
+	}
+	metricName := genPrefix(metric, metricsPrefix)
+	return []byte(metricName)
 }
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
@@ -117,8 +147,10 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Du
 			log.Printf("TCP timeout for %s - %s\n", tcpAddr, e)
 			break
 		}
-		conn.Write(buff)
-		conn.Close()
+		if conn != nil {
+			conn.Write(buff)
+			conn.Close()
+		}
 	case "TEST":
 		// A test no-op
 	default:
@@ -193,9 +225,13 @@ func handleBuff(buff []byte) {
 				packets[target].Reset()
 			}
 			// add to packet
-			packets[target].Write(buff[offset : offset+size])
+			if len(metricsPrefix) != 0 {
+				buffPrefix = addPrefix(buff[offset:offset+size], metricsPrefix)
+				packets[target].Write(buffPrefix)
+			} else {
+				packets[target].Write(buff[offset : offset+size])
+			}
 			packets[target].Write(sep)
-
 			numMetrics++
 		}
 
@@ -269,8 +305,12 @@ func readUDP(ip string, port int, c chan []byte) {
 	}
 
 	if sendproto == "TCP" {
-		log.Printf("TCP send timeout %s", TCPtimeout)
+		log.Printf("TCP send timeout set to %s", TCPtimeout)
 
+	}
+
+	if len(metricsPrefix) != 0 {
+		log.Printf("Metrics prefix set to %s", metricsPrefix)
 	}
 
 	if verbose {
@@ -345,6 +385,7 @@ func main() {
 	flag.StringVar(&bindAddress, "b", "0.0.0.0", "IP Address to listen on")
 
 	flag.StringVar(&prefix, "prefix", "statsrelay", "The prefix to use with self generated stats")
+	flag.StringVar(&metricsPrefix, "metrics-prefix", "", "The prefix to use with metrics passed through statsrelay")
 
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
