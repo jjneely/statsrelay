@@ -28,12 +28,17 @@ Command synopsis:
     -p=9125: Port to listen on
     -port=9125: Port to listen on
     -prefix="statsrelay": The prefix to use with self generated stats
-
+    -metrics-prefix="production.us-east-1": The prefix to use with metrics passed through statsrelay
+    -bufsize="32768": Read buffer size
+    -packetlen="1400": Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.
+    -sendproto="TCP": IP Protocol for sending data - TCP or UDP
+    -tcptimeout="500ms": Timeout for TCP client remote connections
+    -verbose=true: Verbose output
 
 You must specify at least one HOST:PORT combination.  The INSTANCE can be
 used to further populate or weight the consistent hashing ring as you see fit.
 The instance is stripped before using the HOST and PORT to create a UDP
-socket.
+socket or TCP connection.
 
 Algorithms and Performance
 ---------------------------
