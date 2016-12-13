@@ -29,7 +29,7 @@ const BUFFERSIZE int = 1 * 1024 * 1024 // 1MiB
 // Such as <prefix>.statsProcessed.  Default is "statsrelay"
 var prefix string
 
-// prefix is the string that will be prefixed onto each metric passed
+// metricsPrefix is the string that will be prefixed onto each metric passed
 // through statsrelay. This is especialy usefull with docker passing
 // env, appname automatic from docker environment to app metri
 // Such as <metricsPrefix>.mytest.service.metric.count  Default is empty
@@ -70,9 +70,6 @@ var bufferMaxSize int
 // Timeout value for remote TCP connection
 var TCPtimeout time.Duration
 
-// buffer with prefix added to metric
-var buffPrefix []byte
-
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
 func getSockBufferMaxSize() (int, error) {
@@ -104,7 +101,7 @@ func getMetricName(metric []byte) (string, error) {
 		return "error", errors.New("Length of -1, must be invalid StatsD data")
 	}
 	if len(metricsPrefix) != 0 {
-		metricName = genPrefix(metric[:length], metricsPrefix)
+		return genPrefix(metric[:length], metricsPrefix), nil
 	} else {
 		metricName = string(metric[:length])
 	}
@@ -115,15 +112,15 @@ func genPrefix(metric []byte, metricsPrefix string) string {
 	return metricsPrefix + "." + string(metric)
 }
 
-func addPrefix(metric []byte, metricsPrefix string) []byte {
+func addPrefix(metric []byte, metricsPrefix string) ([]byte, error) {
 	// statsd metrics are of the form:
 	//    KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
 	length := bytes.IndexByte(metric, byte(':'))
 	if length == -1 {
-		return []byte("error")
+		return nil, errors.New("Length of -1, must be invalid StatsD data in adding prefix")
 	}
 	metricName := genPrefix(metric, metricsPrefix)
-	return []byte(metricName)
+	return []byte(metricName), nil
 }
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
@@ -143,14 +140,12 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Du
 			log.Fatalf("ResolveTCPAddr Failed %s\n", err.Error())
 		}
 		conn, err := net.DialTimeout("tcp", target, TCPtimeout)
-		if e, ok := err.(net.Error); ok && e.Timeout() {
-			log.Printf("TCP timeout for %s - %s\n", tcpAddr, e)
+		if err != nil {
+			log.Printf("TCP error for %s - %s\n", tcpAddr, err)
 			break
 		}
-		if conn != nil {
-			conn.Write(buff)
-			conn.Close()
-		}
+		conn.Write(buff)
+		conn.Close()
 	case "TEST":
 		// A test no-op
 	default:
@@ -226,7 +221,10 @@ func handleBuff(buff []byte) {
 			}
 			// add to packet
 			if len(metricsPrefix) != 0 {
-				buffPrefix = addPrefix(buff[offset:offset+size], metricsPrefix)
+				buffPrefix, err := addPrefix(buff[offset:offset+size], metricsPrefix)
+				if err != nil {
+					log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
+				}
 				packets[target].Write(buffPrefix)
 			} else {
 				packets[target].Write(buff[offset : offset+size])
