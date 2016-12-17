@@ -95,17 +95,14 @@ func getSockBufferMaxSize() (int, error) {
 func getMetricName(metric []byte) (string, error) {
 	// statsd metrics are of the form:
 	//    KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
-	var metricName string
 	length := bytes.IndexByte(metric, byte(':'))
 	if length == -1 {
 		return "error", errors.New("Length of -1, must be invalid StatsD data")
 	}
 	if len(metricsPrefix) != 0 {
 		return genPrefix(metric[:length], metricsPrefix), nil
-	} else {
-		metricName = string(metric[:length])
 	}
-	return metricName, nil
+	return string(metric[:length]), nil
 }
 
 func genPrefix(metric []byte, metricsPrefix string) string {
@@ -224,6 +221,7 @@ func handleBuff(buff []byte) {
 				buffPrefix, err := addPrefix(buff[offset:offset+size], metricsPrefix)
 				if err != nil {
 					log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
+					break
 				}
 				packets[target].Write(buffPrefix)
 			} else {
