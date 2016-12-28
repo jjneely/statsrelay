@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION string = "0.0.5"
+const VERSION string = "0.0.6"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
@@ -34,6 +34,13 @@ var prefix string
 // env, appname automatic from docker environment to app metri
 // Such as <metricsPrefix>.mytest.service.metric.count  Default is empty
 var metricsPrefix string
+
+// metricTags is the string that will be used as tags into each metric passed
+// through statsrelay.
+// This is especialy usefull with datadog statsd metrics passing.
+// Such as my.prefix.myinc:1|c|@1.000000|#baz,foo:bar
+// Default is empty
+var metricTags string
 
 // udpAddr is a mapping of HOST:PORT:INSTANCE to a UDPAddr object
 var udpAddr = make(map[string]*net.UDPAddr)
@@ -105,19 +112,39 @@ func getMetricName(metric []byte) (string, error) {
 	return string(metric[:length]), nil
 }
 
+// genPrefix() combine metric []byte with metricsPrefix string and return as string
 func genPrefix(metric []byte, metricsPrefix string) string {
-	return metricsPrefix + "." + string(metric)
+	if len(metricsPrefix) != 0 {
+		return metricsPrefix + "." + string(metric)
+	}
+	return string(metric)
 }
 
-func addPrefix(metric []byte, metricsPrefix string) ([]byte, error) {
+// extendMetric() add prefix to []byte metric as a string, extracts metric
+// key name and add metrics prefixs, then returning new key as []byte.
+func extendMetric(metric []byte, metricsPrefix string, metricTags string) ([]byte, error) {
 	// statsd metrics are of the form:
-	//    KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
+	// KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
 	length := bytes.IndexByte(metric, byte(':'))
 	if length == -1 {
 		return nil, errors.New("Length of -1, must be invalid StatsD data in adding prefix")
 	}
-	metricName := genPrefix(metric, metricsPrefix)
-	return []byte(metricName), nil
+	if len(metricTags) != 0 {
+		return []byte(genTags(genPrefix(metric, metricsPrefix), metricTags)), nil
+	}
+	return []byte(genPrefix(metric, metricsPrefix)), nil
+}
+
+// genTags() add metric []byte and metricTags string, return string
+// of metrics with additional tags
+func genTags(metric, metricTags string) string {
+	// statsd metrics are of the form:
+	// KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
+	// This function add or extend #tags in metric
+	if strings.Contains((metric), "|#") {
+		return metric + "," + metricTags
+	}
+	return metric + "|#" + metricTags
 }
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
@@ -217,8 +244,8 @@ func handleBuff(buff []byte) {
 				packets[target].Reset()
 			}
 			// add to packet
-			if len(metricsPrefix) != 0 {
-				buffPrefix, err := addPrefix(buff[offset:offset+size], metricsPrefix)
+			if len(metricsPrefix) != 0 || len(metricTags) != 0 {
+				buffPrefix, err := extendMetric(buff[offset:offset+size], metricsPrefix, metricTags)
 				if err != nil {
 					log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
 					break
@@ -309,6 +336,10 @@ func readUDP(ip string, port int, c chan []byte) {
 		log.Printf("Metrics prefix set to %s", metricsPrefix)
 	}
 
+	if len(metricTags) != 0 {
+		log.Printf("Metrics tags set to %s", metricTags)
+	}
+
 	if verbose {
 		log.Printf("Rock and Roll!\n")
 	}
@@ -382,6 +413,8 @@ func main() {
 
 	flag.StringVar(&prefix, "prefix", "statsrelay", "The prefix to use with self generated stats")
 	flag.StringVar(&metricsPrefix, "metrics-prefix", "", "The prefix to use with metrics passed through statsrelay")
+
+	flag.StringVar(&metricTags, "metrics-tags", "", "Comma separated tags for each relayed metric. Example: foo:bar,test,test2:bar")
 
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")

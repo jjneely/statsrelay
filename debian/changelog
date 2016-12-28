@@ -1,3 +1,9 @@
+statsrelay (0.0.6) unstable; urgency=medium
+
+  * Add tags support in relayed metrics
+
+ -- Slawomir Skowron <slawomir.skowron@gmail.com>  Mon, 25 Dec 2016 14:05:13 +0100
+
 statsrelay (0.0.5) unstable; urgency=medium
 
   * Add forwarded metrics prefix
