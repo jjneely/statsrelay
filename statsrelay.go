@@ -115,7 +115,7 @@ func getMetricName(metric []byte) (string, error) {
 // genPrefix() combine metric []byte with metricsPrefix string and return as string
 func genPrefix(metric []byte, metricsPrefix string) string {
 	if len(metricsPrefix) != 0 {
-		return metricsPrefix + "." + string(metric)
+		return fmt.Sprintf("%s.%s", metricsPrefix, string(metric))
 	}
 	return string(metric)
 }
@@ -142,9 +142,9 @@ func genTags(metric, metricTags string) string {
 	// KEY:VALUE|TYPE|RATE or KEY:VALUE|TYPE|RATE|#tags
 	// This function add or extend #tags in metric
 	if strings.Contains((metric), "|#") {
-		return metric + "," + metricTags
+		return fmt.Sprintf("%s,%s", metric, metricTags)
 	}
-	return metric + "|#" + metricTags
+	return fmt.Sprintf("%s|#%s", metric, metricTags)
 }
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
@@ -169,7 +169,7 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Du
 			break
 		}
 		conn.Write(buff)
-		conn.Close()
+		defer conn.Close()
 	case "TEST":
 		// A test no-op
 	default:
