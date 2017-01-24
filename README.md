@@ -33,6 +33,8 @@ Command synopsis:
     -packetlen="1400": Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.
     -sendproto="UDP": IP Protocol for sending data - TCP or UDP
     -tcptimeout="1s": Timeout for TCP client remote connections
+    -pprof=false: Golang profiling support
+    -pprof-bind=":8080": Listen host:port for HTTP pprof data
     -verbose=false: Verbose output
 
 You must specify at least one HOST:PORT combination.  The INSTANCE can be
