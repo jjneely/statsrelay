@@ -75,7 +75,7 @@ var TCPtimeout time.Duration
 // profiling bool value to enable disable http endpoint for profiling
 var profiling bool
 
-// profiling-bind string value for pprof http host:port data
+// profilingBind string value for pprof http host:port data
 var profilingBind string
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
