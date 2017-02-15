@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +70,9 @@ var bufferMaxSize int
 
 // Timeout value for remote TCP connection
 var TCPtimeout time.Duration
+
+// maxprocs int value to set GOMAXPROCS
+var maxprocs int
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -383,6 +387,8 @@ func main() {
 	flag.StringVar(&prefix, "prefix", "statsrelay", "The prefix to use with self generated stats")
 	flag.StringVar(&metricsPrefix, "metrics-prefix", "", "The prefix to use with metrics passed through statsrelay")
 
+	flag.IntVar(&maxprocs, "maxprocs", 0, "Set GOMAXPROCS in runtime. If not defined then Golang defaults.")
+
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
@@ -403,6 +409,11 @@ func main() {
 
 	if len(flag.Args()) == 0 {
 		log.Fatalf("One or more host specifications are needed to locate statsd daemons.\n")
+	}
+
+	if maxprocs != 0 {
+		log.Printf("Using GOMAXPROCS %d", maxprocs)
+		runtime.GOMAXPROCS(maxprocs)
 	}
 
 	for _, v := range flag.Args() {
