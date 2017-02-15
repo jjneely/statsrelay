@@ -29,6 +29,7 @@ Command synopsis:
     -port=9125: Port to listen on
     -prefix="statsrelay": The prefix to use with self generated stats
     -metrics-prefix="": The prefix to use with metrics passed through statsrelay
+    -metrics-tags="": Metrics tags added at the end of each relayed metric
     -bufsize="32768": Read buffer size
     -packetlen="1400": Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.
     -sendproto="UDP": IP Protocol for sending data - TCP or UDP
