@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -69,6 +71,12 @@ var bufferMaxSize int
 
 // Timeout value for remote TCP connection
 var TCPtimeout time.Duration
+
+// profiling bool value to enable disable http endpoint for profiling
+var profiling bool
+
+// profilingBind string value for pprof http host:port data
+var profilingBind string
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -392,6 +400,9 @@ func main() {
 	flag.DurationVar(&TCPtimeout, "tcptimeout", 1*time.Second, "Timeout for TCP client remote connections")
 	flag.DurationVar(&TCPtimeout, "t", 1*time.Second, "Timeout for TCP client remote connections")
 
+	flag.BoolVar(&profiling, "pprof", false, "Enable HTTP endpoint for pprof")
+	flag.StringVar(&profilingBind, "pprof-bind", ":8080", "Bind for pprof HTTP endpoint")
+
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {
 		defaultBufferSize = 32 * 1024
@@ -403,6 +414,12 @@ func main() {
 
 	if len(flag.Args()) == 0 {
 		log.Fatalf("One or more host specifications are needed to locate statsd daemons.\n")
+	}
+
+	if profiling {
+		go func() {
+			log.Println(http.ListenAndServe(profilingBind, nil))
+		}()
 	}
 
 	for _, v := range flag.Args() {
@@ -440,4 +457,5 @@ func main() {
 	runServer(bindAddress, port)
 
 	log.Printf("Normal shutdown.\n")
+
 }
