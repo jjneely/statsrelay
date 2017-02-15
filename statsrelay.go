@@ -12,6 +12,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,6 +85,9 @@ var profiling bool
 
 // profilingBind string value for pprof http host:port data
 var profilingBind string
+
+// maxprocs int value to set GOMAXPROCS
+var maxprocs int
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -424,6 +428,8 @@ func main() {
 
 	flag.StringVar(&metricTags, "metrics-tags", "", "Comma separated tags for each relayed metric. Example: foo:bar,test,test2:bar")
 
+	flag.IntVar(&maxprocs, "maxprocs", 0, "Set GOMAXPROCS in runtime. If not defined then Golang defaults.")
+
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
@@ -447,6 +453,11 @@ func main() {
 
 	if len(flag.Args()) == 0 {
 		log.Fatalf("One or more host specifications are needed to locate statsd daemons.\n")
+	}
+
+	if maxprocs != 0 {
+		log.Printf("Using GOMAXPROCS %d", maxprocs)
+		runtime.GOMAXPROCS(maxprocs)
 	}
 
 	if profiling {
