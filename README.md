@@ -32,7 +32,7 @@ Command synopsis:
     -metrics-tags="": Metrics tags added at the end of each relayed metric
     -bufsize="32768": Read buffer size
     -packetlen="1400": Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.
-    -sendproto="UDP": IP Protocol for sending data - TCP or UDP
+    -sendproto="UDP": IP Protocol for sending data: TCP, UDP, or TEST
     -tcptimeout="1s": Timeout for TCP client remote connections
     -pprof=false: Golang profiling support
     -pprof-bind=":8080": Listen host:port for HTTP pprof data

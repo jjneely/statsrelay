@@ -183,7 +183,10 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Du
 		conn.Write(buff)
 		defer conn.Close()
 	case "TEST":
-		// A test no-op
+		if verbose {
+			log.Printf("Debug: Would have sent packet of %d bytes to %s",
+				len(buff), target)
+		}
 	default:
 		log.Fatalf("Illegal send protocol %s", sendproto)
 	}
@@ -433,7 +436,7 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
-	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data - TCP or UDP")
+	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data: TCP, UDP, or TEST")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
 
 	flag.DurationVar(&TCPtimeout, "tcptimeout", 1*time.Second, "Timeout for TCP client remote connections")
