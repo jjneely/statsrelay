@@ -249,13 +249,14 @@ func handleBuff(buff []byte) {
 		if err == nil {
 
 			target := hashRing.GetNode(metric).Server
+
 			if verbose {
 				log.Printf("Sending %s to %s", metric, target)
 			}
 
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
+				go sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
 				packets[target].Reset()
 			}
 			// add to packet
@@ -304,7 +305,7 @@ func handleBuff(buff []byte) {
 	}
 
 	if verbose && time.Now().Unix()-epochTime > 0 {
-		log.Printf("Procssed %d metrics. Running total: %d. Metrics/sec: %d\n",
+		log.Printf("Processed %d metrics. Running total: %d. Metrics/sec: %d\n",
 			numMetrics, totalMetrics,
 			int64(totalMetrics)/(time.Now().Unix()-epochTime))
 	}
