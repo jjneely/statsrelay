@@ -250,10 +250,6 @@ func handleBuff(buff []byte) {
 
 			target := hashRing.GetNode(metric).Server
 
-			if verbose {
-				log.Printf("Sending %s to %s", metric, target)
-			}
-
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
 				go sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
@@ -262,12 +258,18 @@ func handleBuff(buff []byte) {
 			// add to packet
 			if len(metricsPrefix) != 0 || len(metricTags) != 0 {
 				buffPrefix, err := extendMetric(buff[offset:offset+size], metricsPrefix, metricTags)
+				if verbose {
+					log.Printf("Sending %s to %s", buffPrefix, target)
+				}
 				if err != nil {
 					log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
 					break
 				}
 				packets[target].Write(buffPrefix)
 			} else {
+				if verbose {
+					log.Printf("Sending %s to %s", metric, target)
+				}
 				packets[target].Write(buff[offset : offset+size])
 			}
 			packets[target].Write(sep)
