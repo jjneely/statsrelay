@@ -90,8 +90,8 @@ var profilingBind string
 // maxprocs int value to set GOMAXPROCS
 var maxprocs int
 
-// MaxRetries int value for number of retries in dial tcp
-var MaxRetries int
+// TCPMaxRetries int value for number of retries in dial tcp
+var TCPMaxRetries int
 
 // TCPMinBackoff duration value for minimal backoff limit time
 var TCPMinBackoff time.Duration
@@ -184,12 +184,12 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Du
 		conn.WriteToUDP(buff, udpAddr[target])
 		conn.Close()
 	case "TCP":
-		for i := 0; i < MaxRetries; i++ {
+		for i := 0; i < TCPMaxRetries; i++ {
 			conn, err := net.DialTimeout("tcp", target, TCPtimeout)
 			if err != nil {
 				doff := boff.Duration()
 				log.Printf("TCP error for %s - %s [Reconnecting in %s, retries left %d/%d]\n",
-					target, err, doff, MaxRetries-i, MaxRetries)
+					target, err, doff, TCPMaxRetries-i, TCPMaxRetries)
 				time.Sleep(doff)
 				continue
 			}
@@ -374,6 +374,7 @@ func readUDP(ip string, port int, c chan []byte) {
 
 	if sendproto == "TCP" {
 		log.Printf("TCP send timeout set to %s", TCPtimeout)
+		log.Printf("TCP Backoff set Min: %s Max: %s Factor: %f Retries: %d", TCPMinBackoff, TCPMaxBackoff, TCPFactorBackoff, TCPMaxRetries)
 	}
 
 	if len(metricsPrefix) != 0 {
@@ -474,7 +475,7 @@ func main() {
 	flag.BoolVar(&profiling, "pprof", false, "Enable HTTP endpoint for pprof")
 	flag.StringVar(&profilingBind, "pprof-bind", ":8080", "Bind for pprof HTTP endpoint")
 
-	flag.IntVar(&MaxRetries, "backoff-retries", 3, "Maximum number of retries in backoff for TCP dial when sendproto set to TCP")
+	flag.IntVar(&TCPMaxRetries, "backoff-retries", 3, "Maximum number of retries in backoff for TCP dial when sendproto set to TCP")
 	flag.DurationVar(&TCPMinBackoff, "backoff-min", 50*time.Millisecond, "Backoff minimal (intiger) time in Millisecond")
 	flag.DurationVar(&TCPMaxBackoff, "backoff-max", 1000*time.Millisecond, "Backoff maximal (intiger) time in Millisecond")
 	flag.Float64Var(&TCPFactorBackoff, "backoff-factor", 1.5, "Backoff factor (float)")
