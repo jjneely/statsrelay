@@ -1,0 +1,6 @@
+hash: 8185028e361b69d497f549b9a21aa8e39b20a1a5ac3638f20f0bfd1bed182828
+updated: 2017-04-26T10:05:23.227245207+02:00
+imports:
+- name: github.com/jpillora/backoff
+  version: 06c7a16c845dc8e0bf575fafeeca0f5462f5eb4d
+testImports: []

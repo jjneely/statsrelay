@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/jpillora/backoff"
 	"io/ioutil"
 	"log"
 	"net"
@@ -89,6 +90,18 @@ var profilingBind string
 // maxprocs int value to set GOMAXPROCS
 var maxprocs int
 
+// TCPMaxRetries int value for number of retries in dial tcp
+var TCPMaxRetries int
+
+// TCPMinBackoff duration value for minimal backoff limit time
+var TCPMinBackoff time.Duration
+
+// TCPMaxBackoff duration value for maximum backoff limit time
+var TCPMaxBackoff time.Duration
+
+// TCPFactorBackoff float64 value for backoff factor
+var TCPFactorBackoff float64
+
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
 func getSockBufferMaxSize() (int, error) {
@@ -161,7 +174,7 @@ func genTags(metric, metricTags string) string {
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Duration) {
+func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Duration, boff *backoff.Backoff) {
 	switch sendproto {
 	case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
@@ -171,17 +184,19 @@ func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Du
 		conn.WriteToUDP(buff, udpAddr[target])
 		conn.Close()
 	case "TCP":
-		tcpAddr, err := net.ResolveTCPAddr("tcp", target)
-		if err != nil {
-			log.Fatalf("ResolveTCPAddr Failed %s\n", err.Error())
+		for i := 0; i < TCPMaxRetries; i++ {
+			conn, err := net.DialTimeout("tcp", target, TCPtimeout)
+			if err != nil {
+				doff := boff.Duration()
+				log.Printf("TCP error for %s - %s [Reconnecting in %s, retries left %d/%d]\n",
+					target, err, doff, TCPMaxRetries-i, TCPMaxRetries)
+				time.Sleep(doff)
+				continue
+			}
+			boff.Reset()
+			conn.Write(buff)
+			defer conn.Close()
 		}
-		conn, err := net.DialTimeout("tcp", target, TCPtimeout)
-		if err != nil {
-			log.Printf("TCP error for %s - %s\n", tcpAddr, err)
-			break
-		}
-		conn.Write(buff)
-		defer conn.Close()
 	case "TEST":
 		if verbose {
 			log.Printf("Debug: Would have sent packet of %d bytes to %s",
@@ -216,6 +231,13 @@ func handleBuff(buff []byte) {
 	numMetrics := 0
 	statsMetric := prefix + ".statsProcessed"
 
+	boff := &backoff.Backoff{
+		Min:    TCPMinBackoff,
+		Max:    TCPMaxBackoff,
+		Factor: TCPFactorBackoff,
+		Jitter: false,
+	}
+
 	for offset := 0; offset < len(buff); {
 	loop:
 		for offset < len(buff) {
@@ -233,7 +255,6 @@ func handleBuff(buff []byte) {
 		}
 
 		size := bytes.IndexByte(buff[offset:], '\n')
-
 		if size == -1 {
 			// last metric in buffer
 			size = len(buff) - offset
@@ -252,7 +273,7 @@ func handleBuff(buff []byte) {
 
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				go sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
+				go sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
 				packets[target].Reset()
 			}
 			// add to packet
@@ -262,8 +283,14 @@ func handleBuff(buff []byte) {
 					log.Printf("Sending %s to %s", buffPrefix, target)
 				}
 				if err != nil {
-					log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
-					break
+					if len(metricsPrefix) != 0 {
+						log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
+						break
+					}
+					if len(metricTags) != 0 {
+						log.Printf("Error %s when adding tag %s", err, metricTags)
+						break
+					}
 				}
 				packets[target].Write(buffPrefix)
 			} else {
@@ -294,7 +321,7 @@ func handleBuff(buff []byte) {
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
 	target := hashRing.GetNode(statsMetric).Server
 	if packets[target].Len()+len(stats) > packetLen {
-		sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout)
+		sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
 		packets[target].Reset()
 	}
 	packets[target].Write([]byte(stats))
@@ -302,7 +329,7 @@ func handleBuff(buff []byte) {
 	// Empty out any remaining data
 	for _, target := range hashRing.Nodes() {
 		if packets[target.Server].Len() > 0 {
-			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto, TCPtimeout)
+			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto, TCPtimeout, boff)
 		}
 	}
 
@@ -347,7 +374,7 @@ func readUDP(ip string, port int, c chan []byte) {
 
 	if sendproto == "TCP" {
 		log.Printf("TCP send timeout set to %s", TCPtimeout)
-
+		log.Printf("TCP Backoff set Min: %s Max: %s Factor: %f Retries: %d", TCPMinBackoff, TCPMaxBackoff, TCPFactorBackoff, TCPMaxRetries)
 	}
 
 	if len(metricsPrefix) != 0 {
@@ -447,6 +474,11 @@ func main() {
 
 	flag.BoolVar(&profiling, "pprof", false, "Enable HTTP endpoint for pprof")
 	flag.StringVar(&profilingBind, "pprof-bind", ":8080", "Bind for pprof HTTP endpoint")
+
+	flag.IntVar(&TCPMaxRetries, "backoff-retries", 3, "Maximum number of retries in backoff for TCP dial when sendproto set to TCP")
+	flag.DurationVar(&TCPMinBackoff, "backoff-min", 50*time.Millisecond, "Backoff minimal (integer) time in Millisecond")
+	flag.DurationVar(&TCPMaxBackoff, "backoff-max", 1000*time.Millisecond, "Backoff maximal (integer) time in Millisecond")
+	flag.Float64Var(&TCPFactorBackoff, "backoff-factor", 1.5, "Backoff factor (float)")
 
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {
