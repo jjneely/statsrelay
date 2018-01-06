@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const VERSION string = "0.0.6"
+const VERSION string = "0.0.7"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
@@ -273,7 +273,7 @@ func handleBuff(buff []byte) {
 
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				go sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
+				sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
 				packets[target].Reset()
 			}
 			// add to packet
