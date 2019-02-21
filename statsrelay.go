@@ -112,6 +112,9 @@ var dnscacheTime time.Duration
 // dnscachePurge after this time all stale objects will be deleted
 var dnscachePurge time.Duration
 
+// dnscacheExp custom expiration when setting new object
+var dnscacheExp time.Duration
+
 // c cache definition for resolved endpoint
 var c = cache.New(dnscacheTime, dnscachePurge)
 
@@ -308,7 +311,7 @@ func handleBuff(buff []byte) {
 			           if err != nil {
 					   log.Printf("Error resolving target %s", target)
 				   }
-				   c.Set(target, targetaddr.String(), cache.DefaultExpiration)
+				   c.Set(target, targetaddr.String(), dnscacheExp)
 				   ctarget = targetaddr.String()
 				}
                         }
@@ -510,6 +513,7 @@ func main() {
         flag.BoolVar(&dnscache, "dnscache", false, "Enable in app DNS cache for resolved TCP sendout sharded endpoints")
         flag.DurationVar(&dnscacheTime, "dnscache-time", 1*time.Second, "Time we cache resolved adresses of sharded endpoint")
         flag.DurationVar(&dnscachePurge, "dnscache-purge", 5*time.Second, "When we purge stale elements in cache")
+        flag.DurationVar(&dnscacheExp, "dnscache-expiration", 1*time.Second, "When set new object after resolv then use this expiration time in cache")
 
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data: TCP, UDP, or TEST")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
