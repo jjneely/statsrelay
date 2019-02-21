@@ -42,7 +42,7 @@ Command synopsis:
     -pprof-bind=":8080": Listen host:port for HTTP pprof data
     -dnscache=false: Enable in app DNS cache for resolved TCP sendout sharded endpoints
     -dnscache-time="1s": Time we cache resolved adresses of sharded endpoint
-    -dnscache-purge="30s": Time purge stale elements in cache
+    -dnscache-purge="5s": Time purge stale elements in cache
     -verbose=false: Verbose output
 
 You must specify at least one HOST:PORT combination.  The INSTANCE can be
