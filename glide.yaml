@@ -1,3 +1,4 @@
 package: github.com/jjneely/statsrelay
 imports:
 - package: github.com/jpillora/backoff
+- package: github.com/patrickmn/go-cache
