@@ -19,9 +19,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+        "github.com/patrickmn/go-cache"
 )
 
-const VERSION string = "0.0.7"
+const VERSION string = "0.0.9"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
@@ -67,6 +68,9 @@ var epochTime int64
 // Verbose/Debug output
 var verbose bool
 
+// dnscache for caching resolved domains in sendout
+var dnscache bool
+
 // IP protocol set for sending data target
 var sendproto string
 
@@ -101,6 +105,21 @@ var TCPMaxBackoff time.Duration
 
 // TCPFactorBackoff float64 value for backoff factor
 var TCPFactorBackoff float64
+
+// dnscacheTime TTL of cached resolved k/v
+var dnscacheTime time.Duration
+
+// dnscachePurge after this time all stale objects will be deleted
+var dnscachePurge time.Duration
+
+// dnscacheExp custom expiration when setting new object
+var dnscacheExp time.Duration
+
+// c cache definition for resolved endpoint
+var c = cache.New(dnscacheTime, dnscachePurge)
+
+// ctarget cached target used for resolving
+var ctarget string
 
 // sockBufferMaxSize() returns the maximum size that the UDP receive buffer
 // in the kernel can be set to.  In bytes.
@@ -174,33 +193,37 @@ func genTags(metric, metricTags string) string {
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Duration, boff *backoff.Backoff) {
-	switch sendproto {
-	case "UDP":
+func sendPacket(buff []byte, ctarget string, sendproto string, TCPtimeout time.Duration, boff *backoff.Backoff) {
+       switch sendproto {
+        case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
 		if err != nil {
 			log.Panicln(err)
 		}
-		conn.WriteToUDP(buff, udpAddr[target])
+		conn.WriteToUDP(buff, udpAddr[ctarget])
 		conn.Close()
-	case "TCP":
+        case "TCP":
+                if verbose {
+                   log.Printf("Sending to target: %s", ctarget)
+                }
 		for i := 0; i < TCPMaxRetries; i++ {
-			conn, err := net.DialTimeout("tcp", target, TCPtimeout)
+			conn, err := net.DialTimeout("tcp", ctarget, TCPtimeout)
 			if err != nil {
 				doff := boff.Duration()
 				log.Printf("TCP error for %s - %s [Reconnecting in %s, retries left %d/%d]\n",
-					target, err, doff, TCPMaxRetries-i, TCPMaxRetries)
+					ctarget, err, doff, TCPMaxRetries-i, TCPMaxRetries)
 				time.Sleep(doff)
 				continue
 			}
-			boff.Reset()
 			conn.Write(buff)
-			defer conn.Close()
+			boff.Reset()
+			conn.Close()
+			break
 		}
 	case "TEST":
 		if verbose {
 			log.Printf("Debug: Would have sent packet of %d bytes to %s",
-				len(buff), target)
+				len(buff), ctarget)
 		}
 	default:
 		log.Fatalf("Illegal send protocol %s", sendproto)
@@ -269,18 +292,39 @@ func handleBuff(buff []byte) {
 
 		if err == nil {
 
-			target := hashRing.GetNode(metric).Server
+                        target := hashRing.GetNode(metric).Server
+                        ctarget := target
 
+                        // resolve and cache
+                        if dnscache {
+                                gettarget, found := c.Get(target)
+				if found {
+				   ctarget = gettarget.(string)
+				   if verbose {
+				      log.Printf("Found in cache target %s (%s)", target, ctarget)
+				   }
+				} else {
+                                   targetaddr, err := net.ResolveUDPAddr("udp", target)
+                                   if verbose {
+                                      log.Printf("Not found in cache adding target %s (%s)", target, ctarget)
+                                   }
+			           if err != nil {
+					   log.Printf("Error resolving target %s", target)
+				   }
+				   c.Set(target, targetaddr.String(), dnscacheExp)
+				   ctarget = targetaddr.String()
+				}
+                        }
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
+				sendPacket(packets[target].Bytes(), ctarget, sendproto, TCPtimeout, boff)
 				packets[target].Reset()
 			}
 			// add to packet
 			if len(metricsPrefix) != 0 || len(metricTags) != 0 {
 				buffPrefix, err := extendMetric(buff[offset:offset+size], metricsPrefix, metricTags)
 				if verbose {
-					log.Printf("Sending %s to %s", buffPrefix, target)
+					log.Printf("Sending %s to %s (%s)", buffPrefix, target, ctarget)
 				}
 				if err != nil {
 					if len(metricsPrefix) != 0 {
@@ -295,7 +339,7 @@ func handleBuff(buff []byte) {
 				packets[target].Write(buffPrefix)
 			} else {
 				if verbose {
-					log.Printf("Sending %s to %s", metric, target)
+					log.Printf("Sending %s to %s (%s)", metric, target, ctarget)
 				}
 				packets[target].Write(buff[offset : offset+size])
 			}
@@ -321,7 +365,7 @@ func handleBuff(buff []byte) {
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
 	target := hashRing.GetNode(statsMetric).Server
 	if packets[target].Len()+len(stats) > packetLen {
-		sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
+		sendPacket(packets[target].Bytes(), ctarget, sendproto, TCPtimeout, boff)
 		packets[target].Reset()
 	}
 	packets[target].Write([]byte(stats))
@@ -466,6 +510,11 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
+        flag.BoolVar(&dnscache, "dnscache", false, "Enable in app DNS cache for resolved TCP sendout sharded endpoints")
+        flag.DurationVar(&dnscacheTime, "dnscache-time", 1*time.Second, "Time we cache resolved adresses of sharded endpoint")
+        flag.DurationVar(&dnscachePurge, "dnscache-purge", 5*time.Second, "When we purge stale elements in cache")
+        flag.DurationVar(&dnscacheExp, "dnscache-expiration", 1*time.Second, "When set new object after resolv then use this expiration time in cache")
+
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data: TCP, UDP, or TEST")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
 
@@ -479,6 +528,7 @@ func main() {
 	flag.DurationVar(&TCPMinBackoff, "backoff-min", 50*time.Millisecond, "Backoff minimal (integer) time in Millisecond")
 	flag.DurationVar(&TCPMaxBackoff, "backoff-max", 1000*time.Millisecond, "Backoff maximal (integer) time in Millisecond")
 	flag.Float64Var(&TCPFactorBackoff, "backoff-factor", 1.5, "Backoff factor (float)")
+
 
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {

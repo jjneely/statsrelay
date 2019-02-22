@@ -40,6 +40,10 @@ Command synopsis:
     -backoff-factor="1.5": Backoff factor (float)
     -pprof=false: Golang profiling support
     -pprof-bind=":8080": Listen host:port for HTTP pprof data
+    -dnscache=false: Enable in app DNS cache for resolved TCP sendout sharded endpoints
+    -dnscache-time="1s": Time we cache resolved adresses of sharded endpoint - default for whole cache
+    -dnscache-purge="5s": Time purge stale elements in cache
+    -dnscache-expiration="1s": When settting new object after resolv then use this expiration time in cache as TTL for this set
     -verbose=false: Verbose output
 
 You must specify at least one HOST:PORT combination.  The INSTANCE can be
