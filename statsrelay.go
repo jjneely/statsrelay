@@ -193,25 +193,25 @@ func genTags(metric, metricTags string) string {
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, ctarget string, sendproto string, TCPtimeout time.Duration, boff *backoff.Backoff) {
+func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Duration, boff *backoff.Backoff) {
        switch sendproto {
         case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
 		if err != nil {
 			log.Panicln(err)
 		}
-		conn.WriteToUDP(buff, udpAddr[ctarget])
+		conn.WriteToUDP(buff, udpAddr[target])
 		conn.Close()
         case "TCP":
                 if verbose {
-                   log.Printf("Sending to target: %s", ctarget)
+                   log.Printf("Sending to target: %s", target)
                 }
 		for i := 0; i < TCPMaxRetries; i++ {
-			conn, err := net.DialTimeout("tcp", ctarget, TCPtimeout)
+			conn, err := net.DialTimeout("tcp", target, TCPtimeout)
 			if err != nil {
 				doff := boff.Duration()
 				log.Printf("TCP error for %s - %s [Reconnecting in %s, retries left %d/%d]\n",
-					ctarget, err, doff, TCPMaxRetries-i, TCPMaxRetries)
+					target, err, doff, TCPMaxRetries-i, TCPMaxRetries)
 				time.Sleep(doff)
 				continue
 			}
@@ -223,7 +223,7 @@ func sendPacket(buff []byte, ctarget string, sendproto string, TCPtimeout time.D
 	case "TEST":
 		if verbose {
 			log.Printf("Debug: Would have sent packet of %d bytes to %s",
-				len(buff), ctarget)
+				len(buff), target)
 		}
 	default:
 		log.Fatalf("Illegal send protocol %s", sendproto)
