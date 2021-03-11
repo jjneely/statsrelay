@@ -365,7 +365,7 @@ func handleBuff(buff []byte) {
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
 	target := hashRing.GetNode(statsMetric).Server
 	if packets[target].Len()+len(stats) > packetLen {
-		sendPacket(packets[target].Bytes(), ctarget, sendproto, TCPtimeout, boff)
+		sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
 		packets[target].Reset()
 	}
 	packets[target].Write([]byte(stats))
