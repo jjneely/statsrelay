@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/dropbox/godropbox/net2"
+	"github.com/patrickmn/go-cache"
 	"io/ioutil"
 	"log"
 	"net"
@@ -18,8 +20,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-        "github.com/patrickmn/go-cache"
-  "github.com/dropbox/godropbox/net2"
 )
 
 const VERSION string = "0.0.10"
@@ -201,48 +201,48 @@ func genTags(metric, metricTags string) string {
 
 // write to the TCP connection pool, recovering errors and retrying
 func connectionPoolWrite(buff []byte, target string) {
-  // get an active connection from the pool
-  conn, err := tcpPool.Get("tcp", target)
-  if err != nil {
-    log.Printf("TCP Error in Pool.Get(): %s", err)
-    // Return on error to ignore this packet
-    return
-  }
-  _, err = conn.Write(buff)
-  if err != nil {
-    log.Printf("TCP Error writing to target pool %s: %s", target, err)
-    // Return on error to ignore this packet
-    return
-  }
-  // finished using the connection, release back to the pool 
-  conn.ReleaseConnection()
+	// get an active connection from the pool
+	conn, err := tcpPool.Get("tcp", target)
+	if err != nil {
+		log.Printf("TCP Error in Pool.Get(): %s", err)
+		// Return on error to ignore this packet
+		return
+	}
+	_, err = conn.Write(buff)
+	if err != nil {
+		log.Printf("TCP Error writing to target pool %s: %s", target, err)
+		// Return on error to ignore this packet
+		return
+	}
+	// finished using the connection, release back to the pool
+	conn.ReleaseConnection()
 }
 
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
 func sendPacket(buff []byte, target string, sendproto string) {
-  switch sendproto {
-  case "UDP":
-    conn, err := net.ListenUDP("udp", nil)
-    if err != nil {
-      log.Panicln(err)
-    }
-    conn.WriteToUDP(buff, udpAddr[target])
-    conn.Close()
-  case "TCP":
-    if verbose {
-      log.Printf("Sending to target: %s => %s", target, buff)
-    }
-    connectionPoolWrite(buff, target)
-    break
-  case "TEST":
-    if verbose {
-      log.Printf("Debug: Would have sent packet of %d bytes to %s",
-      len(buff), target)
-    }
-  default:
-    log.Fatalf("Illegal send protocol %s", sendproto)
-  }
+	switch sendproto {
+	case "UDP":
+		conn, err := net.ListenUDP("udp", nil)
+		if err != nil {
+			log.Panicln(err)
+		}
+		conn.WriteToUDP(buff, udpAddr[target])
+		conn.Close()
+	case "TCP":
+		if verbose {
+			log.Printf("Sending to target: %s => %s", target, buff)
+		}
+		connectionPoolWrite(buff, target)
+		break
+	case "TEST":
+		if verbose {
+			log.Printf("Debug: Would have sent packet of %d bytes to %s",
+				len(buff), target)
+		}
+	default:
+		log.Fatalf("Illegal send protocol %s", sendproto)
+	}
 }
 
 // buildPacketMap() is a helper function to initialize a map that represents
@@ -264,140 +264,140 @@ func buildPacketMap() map[string]*bytes.Buffer {
 // handleBuff() sorts through a full buffer of metrics and batches metrics
 // to remote statsd daemons using a consistent hash.
 func handleBuff(buff []byte) {
-  packets := buildPacketMap()
-  sep := []byte("\n")
-  numMetrics := 0
-  statsMetric := prefix + ".statsProcessed"
+	packets := buildPacketMap()
+	sep := []byte("\n")
+	numMetrics := 0
+	statsMetric := prefix + ".statsProcessed"
 
-  for offset := 0; offset < len(buff); {
-    loop:
-    for offset < len(buff) {
-      // Find our next value
-      switch buff[offset] {
-      case '\n':
-        offset++
-      case '\r':
-        offset++
-      case 0:
-        offset++
-      default:
-        break loop
-      }
-    }
+	for offset := 0; offset < len(buff); {
+	loop:
+		for offset < len(buff) {
+			// Find our next value
+			switch buff[offset] {
+			case '\n':
+				offset++
+			case '\r':
+				offset++
+			case 0:
+				offset++
+			default:
+				break loop
+			}
+		}
 
-    size := bytes.IndexByte(buff[offset:], '\n')
-    if size == -1 {
-      // last metric in buffer
-      size = len(buff) - offset
-    }
-    if size == 0 {
-      // no more metrics
-      break
-    }
+		size := bytes.IndexByte(buff[offset:], '\n')
+		if size == -1 {
+			// last metric in buffer
+			size = len(buff) - offset
+		}
+		if size == 0 {
+			// no more metrics
+			break
+		}
 
-    // Check to ensure we get a metric, and not an invalid Byte sequence
-    metric, err := getMetricName(buff[offset : offset+size])
+		// Check to ensure we get a metric, and not an invalid Byte sequence
+		metric, err := getMetricName(buff[offset : offset+size])
 
-    if err == nil {
+		if err == nil {
 
-      target := hashRing.GetNode(metric).Server
-      ctarget := target
+			target := hashRing.GetNode(metric).Server
+			ctarget := target
 
-      // resolve and cache
-      if dnscache {
-        gettarget, found := c.Get(target)
-        if found {
-          ctarget = gettarget.(string)
-          if verbose {
-            log.Printf("Found in cache target %s (%s)", target, ctarget)
-          }
-        } else {
-          targetaddr, err := net.ResolveUDPAddr("udp", target)
-          if verbose {
-            log.Printf("Not found in cache adding target %s (%s)", target, ctarget)
-          }
-          if err != nil {
-            log.Printf("Error resolving target %s", target)
-          }
-          c.Set(target, targetaddr.String(), dnscacheExp)
-          ctarget = targetaddr.String()
-          // Register the destination IP:PORT combo in the TCP pool 
-          if sendproto == "TCP" {
-            tcpPool.Register("tcp", ctarget)
-          }
-        }
-      }
-      // check built packet size and send if metric doesn't fit
-      if packets[target].Len()+size > packetLen {
-        sendPacket(packets[target].Bytes(), ctarget, sendproto)
-        packets[target].Reset()
-      }
-      // add to packet
-      if len(metricsPrefix) != 0 || len(metricTags) != 0 {
-        buffPrefix, err := extendMetric(buff[offset:offset+size], metricsPrefix, metricTags)
-        if verbose {
-          log.Printf("Sending %s to %s (%s)", buffPrefix, target, ctarget)
-        }
-        if err != nil {
-          if len(metricsPrefix) != 0 {
-            log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
-            break
-          }
-          if len(metricTags) != 0 {
-            log.Printf("Error %s when adding tag %s", err, metricTags)
-            break
-          }
-        }
-        packets[target].Write(buffPrefix)
-      } else {
-        if verbose {
-          log.Printf("Sending %s to %s (%s)", metric, target, ctarget)
-        }
-        packets[target].Write(buff[offset : offset+size])
-      }
-      packets[target].Write(sep)
-      numMetrics++
-    }
+			// resolve and cache
+			if dnscache {
+				gettarget, found := c.Get(target)
+				if found {
+					ctarget = gettarget.(string)
+					if verbose {
+						log.Printf("Found in cache target %s (%s)", target, ctarget)
+					}
+				} else {
+					targetaddr, err := net.ResolveUDPAddr("udp", target)
+					if verbose {
+						log.Printf("Not found in cache adding target %s (%s)", target, ctarget)
+					}
+					if err != nil {
+						log.Printf("Error resolving target %s", target)
+					}
+					c.Set(target, targetaddr.String(), dnscacheExp)
+					ctarget = targetaddr.String()
+					// Register the destination IP:PORT combo in the TCP pool
+					if sendproto == "TCP" {
+						tcpPool.Register("tcp", ctarget)
+					}
+				}
+			}
+			// check built packet size and send if metric doesn't fit
+			if packets[target].Len()+size > packetLen {
+				sendPacket(packets[target].Bytes(), ctarget, sendproto)
+				packets[target].Reset()
+			}
+			// add to packet
+			if len(metricsPrefix) != 0 || len(metricTags) != 0 {
+				buffPrefix, err := extendMetric(buff[offset:offset+size], metricsPrefix, metricTags)
+				if verbose {
+					log.Printf("Sending %s to %s (%s)", buffPrefix, target, ctarget)
+				}
+				if err != nil {
+					if len(metricsPrefix) != 0 {
+						log.Printf("Error %s when adding prefix %s", err, metricsPrefix)
+						break
+					}
+					if len(metricTags) != 0 {
+						log.Printf("Error %s when adding tag %s", err, metricTags)
+						break
+					}
+				}
+				packets[target].Write(buffPrefix)
+			} else {
+				if verbose {
+					log.Printf("Sending %s to %s (%s)", metric, target, ctarget)
+				}
+				packets[target].Write(buff[offset : offset+size])
+			}
+			packets[target].Write(sep)
+			numMetrics++
+		}
 
-    offset = offset + size + 1
-  }
+		offset = offset + size + 1
+	}
 
-  if numMetrics == 0 {
-    // if we haven't handled any metrics, then don't update counters/stats
-    // or send packets
-    return
-  }
+	if numMetrics == 0 {
+		// if we haven't handled any metrics, then don't update counters/stats
+		// or send packets
+		return
+	}
 
-  // Update internal counter
-  totalMetricsLock.Lock()
-  totalMetrics = totalMetrics + numMetrics
-  totalMetricsLock.Unlock()
+	// Update internal counter
+	totalMetricsLock.Lock()
+	totalMetrics = totalMetrics + numMetrics
+	totalMetricsLock.Unlock()
 
-  // Handle reporting our own stats
-  stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
-  target := hashRing.GetNode(statsMetric).Server
-  if packets[target].Len()+len(stats) > packetLen {
-    sendPacket(packets[target].Bytes(), target, sendproto)
-    packets[target].Reset()
-  }
-  packets[target].Write([]byte(stats))
+	// Handle reporting our own stats
+	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
+	target := hashRing.GetNode(statsMetric).Server
+	if packets[target].Len()+len(stats) > packetLen {
+		sendPacket(packets[target].Bytes(), target, sendproto)
+		packets[target].Reset()
+	}
+	packets[target].Write([]byte(stats))
 
-  // Empty out any remaining data
-  for _, target := range hashRing.Nodes() {
-    if packets[target.Server].Len() > 0 {
-      sendPacket(packets[target.Server].Bytes(), target.Server, sendproto)
-    }
-  }
+	// Empty out any remaining data
+	for _, target := range hashRing.Nodes() {
+		if packets[target.Server].Len() > 0 {
+			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto)
+		}
+	}
 
-  if verbose && time.Now().Unix()-epochTime > 0 {
-    log.Printf("Processed %d metrics. Running total: %d. Metrics/sec: %d\n",
-    numMetrics, totalMetrics,
-    int64(totalMetrics)/(time.Now().Unix()-epochTime))
-    if sendproto == "TCP" {
-      log.Printf("TCP Pool:  Active: %d   Max: %d  Idle: %d", 
-        tcpPool.NumActive(), tcpPool.ActiveHighWaterMark(), tcpPool.NumIdle())
-    }
-  }
+	if verbose && time.Now().Unix()-epochTime > 0 {
+		log.Printf("Processed %d metrics. Running total: %d. Metrics/sec: %d\n",
+			numMetrics, totalMetrics,
+			int64(totalMetrics)/(time.Now().Unix()-epochTime))
+		if sendproto == "TCP" {
+			log.Printf("TCP Pool:  Active: %d   Max: %d  Idle: %d",
+				tcpPool.NumActive(), tcpPool.ActiveHighWaterMark(), tcpPool.NumIdle())
+		}
+	}
 }
 
 // readUDP() a goroutine that just reads data off of a UDP socket and fills
@@ -434,10 +434,10 @@ func readUDP(ip string, port int, c chan []byte) {
 
 	if sendproto == "TCP" {
 		log.Printf("TCP send timeout set to %s", TCPtimeout)
-    log.Printf("TCP Pool maximum active connections: %d", TCPMaxActive)
-    log.Printf("TCP Pool maximum idle connections: %d", TCPMaxIdle)
-    log.Printf("TCP Pool maximum idle timeout: %v", TCPMaxTimeout)
-    log.Printf("TCP Pool maximum new concurrent connections: %d", TCPMaxNewConnections)
+		log.Printf("TCP Pool maximum active connections: %d", TCPMaxActive)
+		log.Printf("TCP Pool maximum idle connections: %d", TCPMaxIdle)
+		log.Printf("TCP Pool maximum idle timeout: %v", TCPMaxTimeout)
+		log.Printf("TCP Pool maximum new concurrent connections: %d", TCPMaxNewConnections)
 	}
 
 	if len(metricsPrefix) != 0 {
@@ -511,7 +511,7 @@ func runServer(host string, port int) {
 
 // wrapper function for connecting that we pass to the TCP pool
 func DialFunc(network string, address string) (net.Conn, error) {
-  return net.DialTimeout(network, address, TCPtimeout)
+	return net.DialTimeout(network, address, TCPtimeout)
 }
 
 func main() {
@@ -534,10 +534,10 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
-        flag.BoolVar(&dnscache, "dnscache", false, "Enable in app DNS cache for resolved TCP sendout sharded endpoints")
-        flag.DurationVar(&dnscacheTime, "dnscache-time", 1*time.Second, "Time we cache resolved adresses of sharded endpoint")
-        flag.DurationVar(&dnscachePurge, "dnscache-purge", 5*time.Second, "When we purge stale elements in cache")
-        flag.DurationVar(&dnscacheExp, "dnscache-expiration", 1*time.Second, "When set new object after resolv then use this expiration time in cache")
+	flag.BoolVar(&dnscache, "dnscache", false, "Enable in app DNS cache for resolved TCP sendout sharded endpoints")
+	flag.DurationVar(&dnscacheTime, "dnscache-time", 1*time.Second, "Time we cache resolved adresses of sharded endpoint")
+	flag.DurationVar(&dnscachePurge, "dnscache-purge", 5*time.Second, "When we purge stale elements in cache")
+	flag.DurationVar(&dnscacheExp, "dnscache-expiration", 1*time.Second, "When set new object after resolv then use this expiration time in cache")
 
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data: TCP, UDP, or TEST")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
@@ -548,10 +548,10 @@ func main() {
 	flag.BoolVar(&profiling, "pprof", false, "Enable HTTP endpoint for pprof")
 	flag.StringVar(&profilingBind, "pprof-bind", ":8080", "Bind for pprof HTTP endpoint")
 
-  flag.IntVar(&TCPMaxActive, "tcpmaxactive", 500, "Maximum number of connections that can be active per host")
-  flag.IntVar(&TCPMaxIdle, "tcpmaxidle", 10, "Maximum number of idle connections per host that are kept alive")
-  flag.DurationVar(&TCPMaxTimeout, "tcpmaxtimeout", 5*time.Minute, "Maximum amount of time an idle connection can live")
-  flag.IntVar(&TCPMaxNewConnections, "tcpmaxnew", 100, "Maximum concurrent new connections created")
+	flag.IntVar(&TCPMaxActive, "tcpmaxactive", 500, "Maximum number of connections that can be active per host")
+	flag.IntVar(&TCPMaxIdle, "tcpmaxidle", 10, "Maximum number of idle connections per host that are kept alive")
+	flag.DurationVar(&TCPMaxTimeout, "tcpmaxtimeout", 5*time.Minute, "Maximum amount of time an idle connection can live")
+	flag.IntVar(&TCPMaxNewConnections, "tcpmaxnew", 100, "Maximum concurrent new connections created")
 
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {
@@ -577,15 +577,15 @@ func main() {
 		}()
 	}
 
-  tcpPool = net2.NewMultiConnectionPool(net2.ConnectionOptions{
-    MaxActiveConnections: int32(TCPMaxActive),
-    MaxIdleConnections: uint32(TCPMaxIdle),
-    MaxIdleTime: &TCPMaxTimeout,
-    DialMaxConcurrency: TCPMaxNewConnections,
-    Dial: DialFunc,
-    ReadTimeout: TCPtimeout,
-    WriteTimeout: TCPtimeout,
-  })
+	tcpPool = net2.NewMultiConnectionPool(net2.ConnectionOptions{
+		MaxActiveConnections: int32(TCPMaxActive),
+		MaxIdleConnections:   uint32(TCPMaxIdle),
+		MaxIdleTime:          &TCPMaxTimeout,
+		DialMaxConcurrency:   TCPMaxNewConnections,
+		Dial:                 DialFunc,
+		ReadTimeout:          TCPtimeout,
+		WriteTimeout:         TCPtimeout,
+	})
 
 	for _, v := range flag.Args() {
 		var addr *net.UDPAddr
@@ -615,10 +615,10 @@ func main() {
 		if addr != nil {
 			udpAddr[v] = addr
 			hashRing.AddNode(Node{v, ""})
-      // Register the destination DNS:PORT combo in the TCP pool
-      if sendproto == "TCP" {
-        tcpPool.Register("tcp", v)
-      }
+			// Register the destination DNS:PORT combo in the TCP pool
+			if sendproto == "TCP" {
+				tcpPool.Register("tcp", v)
+			}
 		}
 	}
 
