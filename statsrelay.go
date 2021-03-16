@@ -5,7 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/jpillora/backoff"
+	"github.com/dropbox/godropbox/net2"
+	"github.com/patrickmn/go-cache"
 	"io/ioutil"
 	"log"
 	"net"
@@ -19,10 +20,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
-        "github.com/patrickmn/go-cache"
 )
 
-const VERSION string = "0.0.9"
+const VERSION string = "0.0.10"
 
 // BUFFERSIZE controls the size of the [...]byte array used to read UDP data
 // off the wire and into local memory.  Metrics are separated by \n
@@ -52,6 +52,10 @@ var udpAddr = make(map[string]*net.UDPAddr)
 
 // tcpAddr is a mapping of HOST:PORT:INSTANCE to a TCPAddr object
 var tcpAddr = make(map[string]*net.TCPAddr)
+
+// tcpPool is our dropbox TCP connection pool object, representing
+// all statsd backend destinations
+var tcpPool net2.ConnectionPool
 
 // hashRing is our consistent hashing ring.
 var hashRing = NewJumpHashRing(1)
@@ -94,17 +98,21 @@ var profilingBind string
 // maxprocs int value to set GOMAXPROCS
 var maxprocs int
 
-// TCPMaxRetries int value for number of retries in dial tcp
-var TCPMaxRetries int
+// The maximum number of connections that can be active per host at any
+// given time (A non-positive value indicates the number of connections
+// is unbounded).
+var TCPMaxActive int
 
-// TCPMinBackoff duration value for minimal backoff limit time
-var TCPMinBackoff time.Duration
+// The maximum number of idle connections per host that are kept alive by
+// the connection pool.
+var TCPMaxIdle int
 
-// TCPMaxBackoff duration value for maximum backoff limit time
-var TCPMaxBackoff time.Duration
+// The maximum amount of time an idle connection can alive (if specified).
+var TCPMaxTimeout time.Duration
 
-// TCPFactorBackoff float64 value for backoff factor
-var TCPFactorBackoff float64
+// This limits the number of concurrent Dial calls (there's no limit when
+// DialMaxConcurrency is non-positive).
+var TCPMaxNewConnections int
 
 // dnscacheTime TTL of cached resolved k/v
 var dnscacheTime time.Duration
@@ -191,35 +199,42 @@ func genTags(metric, metricTags string) string {
 	return fmt.Sprintf("%s|#%s", metric, metricTags)
 }
 
+// write to the TCP connection pool, recovering errors and retrying
+func connectionPoolWrite(buff []byte, target string) {
+	// get an active connection from the pool
+	conn, err := tcpPool.Get("tcp", target)
+	if err != nil {
+		log.Printf("TCP Error in Pool.Get(): %s", err)
+		// Return on error to ignore this packet
+		return
+	}
+	_, err = conn.Write(buff)
+	if err != nil {
+		log.Printf("TCP Error writing to target pool %s: %s", target, err)
+		// Return on error to ignore this packet
+		return
+	}
+	// finished using the connection, release back to the pool
+	conn.ReleaseConnection()
+}
+
 // sendPacket takes a []byte and writes that directly to a UDP socket
 // that was assigned for target.
-func sendPacket(buff []byte, target string, sendproto string, TCPtimeout time.Duration, boff *backoff.Backoff) {
-       switch sendproto {
-        case "UDP":
+func sendPacket(buff []byte, target string, sendproto string) {
+	switch sendproto {
+	case "UDP":
 		conn, err := net.ListenUDP("udp", nil)
 		if err != nil {
 			log.Panicln(err)
 		}
 		conn.WriteToUDP(buff, udpAddr[target])
 		conn.Close()
-        case "TCP":
-                if verbose {
-                   log.Printf("Sending to target: %s", target)
-                }
-		for i := 0; i < TCPMaxRetries; i++ {
-			conn, err := net.DialTimeout("tcp", target, TCPtimeout)
-			if err != nil {
-				doff := boff.Duration()
-				log.Printf("TCP error for %s - %s [Reconnecting in %s, retries left %d/%d]\n",
-					target, err, doff, TCPMaxRetries-i, TCPMaxRetries)
-				time.Sleep(doff)
-				continue
-			}
-			conn.Write(buff)
-			boff.Reset()
-			conn.Close()
-			break
+	case "TCP":
+		if verbose {
+			log.Printf("Sending to target: %s => %s", target, buff)
 		}
+		connectionPoolWrite(buff, target)
+		break
 	case "TEST":
 		if verbose {
 			log.Printf("Debug: Would have sent packet of %d bytes to %s",
@@ -254,13 +269,6 @@ func handleBuff(buff []byte) {
 	numMetrics := 0
 	statsMetric := prefix + ".statsProcessed"
 
-	boff := &backoff.Backoff{
-		Min:    TCPMinBackoff,
-		Max:    TCPMaxBackoff,
-		Factor: TCPFactorBackoff,
-		Jitter: false,
-	}
-
 	for offset := 0; offset < len(buff); {
 	loop:
 		for offset < len(buff) {
@@ -292,32 +300,36 @@ func handleBuff(buff []byte) {
 
 		if err == nil {
 
-                        target := hashRing.GetNode(metric).Server
-                        ctarget := target
+			target := hashRing.GetNode(metric).Server
+			ctarget := target
 
-                        // resolve and cache
-                        if dnscache {
-                                gettarget, found := c.Get(target)
+			// resolve and cache
+			if dnscache {
+				gettarget, found := c.Get(target)
 				if found {
-				   ctarget = gettarget.(string)
-				   if verbose {
-				      log.Printf("Found in cache target %s (%s)", target, ctarget)
-				   }
+					ctarget = gettarget.(string)
+					if verbose {
+						log.Printf("Found in cache target %s (%s)", target, ctarget)
+					}
 				} else {
-                                   targetaddr, err := net.ResolveUDPAddr("udp", target)
-                                   if verbose {
-                                      log.Printf("Not found in cache adding target %s (%s)", target, ctarget)
-                                   }
-			           if err != nil {
-					   log.Printf("Error resolving target %s", target)
-				   }
-				   c.Set(target, targetaddr.String(), dnscacheExp)
-				   ctarget = targetaddr.String()
+					targetaddr, err := net.ResolveUDPAddr("udp", target)
+					if verbose {
+						log.Printf("Not found in cache adding target %s (%s)", target, ctarget)
+					}
+					if err != nil {
+						log.Printf("Error resolving target %s", target)
+					}
+					c.Set(target, targetaddr.String(), dnscacheExp)
+					ctarget = targetaddr.String()
+					// Register the destination IP:PORT combo in the TCP pool
+					if sendproto == "TCP" {
+						tcpPool.Register("tcp", ctarget)
+					}
 				}
-                        }
+			}
 			// check built packet size and send if metric doesn't fit
 			if packets[target].Len()+size > packetLen {
-				sendPacket(packets[target].Bytes(), ctarget, sendproto, TCPtimeout, boff)
+				sendPacket(packets[target].Bytes(), ctarget, sendproto)
 				packets[target].Reset()
 			}
 			// add to packet
@@ -365,7 +377,7 @@ func handleBuff(buff []byte) {
 	stats := fmt.Sprintf("%s:%d|c\n", statsMetric, numMetrics)
 	target := hashRing.GetNode(statsMetric).Server
 	if packets[target].Len()+len(stats) > packetLen {
-		sendPacket(packets[target].Bytes(), target, sendproto, TCPtimeout, boff)
+		sendPacket(packets[target].Bytes(), target, sendproto)
 		packets[target].Reset()
 	}
 	packets[target].Write([]byte(stats))
@@ -373,7 +385,7 @@ func handleBuff(buff []byte) {
 	// Empty out any remaining data
 	for _, target := range hashRing.Nodes() {
 		if packets[target.Server].Len() > 0 {
-			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto, TCPtimeout, boff)
+			sendPacket(packets[target.Server].Bytes(), target.Server, sendproto)
 		}
 	}
 
@@ -381,6 +393,10 @@ func handleBuff(buff []byte) {
 		log.Printf("Processed %d metrics. Running total: %d. Metrics/sec: %d\n",
 			numMetrics, totalMetrics,
 			int64(totalMetrics)/(time.Now().Unix()-epochTime))
+		if sendproto == "TCP" {
+			log.Printf("TCP Pool:  Active: %d   Max: %d  Idle: %d",
+				tcpPool.NumActive(), tcpPool.ActiveHighWaterMark(), tcpPool.NumIdle())
+		}
 	}
 }
 
@@ -418,7 +434,10 @@ func readUDP(ip string, port int, c chan []byte) {
 
 	if sendproto == "TCP" {
 		log.Printf("TCP send timeout set to %s", TCPtimeout)
-		log.Printf("TCP Backoff set Min: %s Max: %s Factor: %f Retries: %d", TCPMinBackoff, TCPMaxBackoff, TCPFactorBackoff, TCPMaxRetries)
+		log.Printf("TCP Pool maximum active connections: %d", TCPMaxActive)
+		log.Printf("TCP Pool maximum idle connections: %d", TCPMaxIdle)
+		log.Printf("TCP Pool maximum idle timeout: %v", TCPMaxTimeout)
+		log.Printf("TCP Pool maximum new concurrent connections: %d", TCPMaxNewConnections)
 	}
 
 	if len(metricsPrefix) != 0 {
@@ -490,6 +509,11 @@ func runServer(host string, port int) {
 	}
 }
 
+// wrapper function for connecting that we pass to the TCP pool
+func DialFunc(network string, address string) (net.Conn, error) {
+	return net.DialTimeout(network, address, TCPtimeout)
+}
+
 func main() {
 	var bindAddress string
 	var port int
@@ -510,10 +534,10 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "Verbose output")
 	flag.BoolVar(&verbose, "v", false, "Verbose output")
 
-        flag.BoolVar(&dnscache, "dnscache", false, "Enable in app DNS cache for resolved TCP sendout sharded endpoints")
-        flag.DurationVar(&dnscacheTime, "dnscache-time", 1*time.Second, "Time we cache resolved adresses of sharded endpoint")
-        flag.DurationVar(&dnscachePurge, "dnscache-purge", 5*time.Second, "When we purge stale elements in cache")
-        flag.DurationVar(&dnscacheExp, "dnscache-expiration", 1*time.Second, "When set new object after resolv then use this expiration time in cache")
+	flag.BoolVar(&dnscache, "dnscache", false, "Enable in app DNS cache for resolved TCP sendout sharded endpoints")
+	flag.DurationVar(&dnscacheTime, "dnscache-time", 1*time.Second, "Time we cache resolved adresses of sharded endpoint")
+	flag.DurationVar(&dnscachePurge, "dnscache-purge", 5*time.Second, "When we purge stale elements in cache")
+	flag.DurationVar(&dnscacheExp, "dnscache-expiration", 1*time.Second, "When set new object after resolv then use this expiration time in cache")
 
 	flag.StringVar(&sendproto, "sendproto", "UDP", "IP Protocol for sending data: TCP, UDP, or TEST")
 	flag.IntVar(&packetLen, "packetlen", 1400, "Max packet length. Must be lower than MTU plus IPv4 and UDP headers to avoid fragmentation.")
@@ -524,11 +548,10 @@ func main() {
 	flag.BoolVar(&profiling, "pprof", false, "Enable HTTP endpoint for pprof")
 	flag.StringVar(&profilingBind, "pprof-bind", ":8080", "Bind for pprof HTTP endpoint")
 
-	flag.IntVar(&TCPMaxRetries, "backoff-retries", 3, "Maximum number of retries in backoff for TCP dial when sendproto set to TCP")
-	flag.DurationVar(&TCPMinBackoff, "backoff-min", 50*time.Millisecond, "Backoff minimal (integer) time in Millisecond")
-	flag.DurationVar(&TCPMaxBackoff, "backoff-max", 1000*time.Millisecond, "Backoff maximal (integer) time in Millisecond")
-	flag.Float64Var(&TCPFactorBackoff, "backoff-factor", 1.5, "Backoff factor (float)")
-
+	flag.IntVar(&TCPMaxActive, "tcpmaxactive", 500, "Maximum number of connections that can be active per host")
+	flag.IntVar(&TCPMaxIdle, "tcpmaxidle", 10, "Maximum number of idle connections per host that are kept alive")
+	flag.DurationVar(&TCPMaxTimeout, "tcpmaxtimeout", 5*time.Minute, "Maximum amount of time an idle connection can live")
+	flag.IntVar(&TCPMaxNewConnections, "tcpmaxnew", 100, "Maximum concurrent new connections created")
 
 	defaultBufferSize, err := getSockBufferMaxSize()
 	if err != nil {
@@ -553,6 +576,16 @@ func main() {
 			log.Println(http.ListenAndServe(profilingBind, nil))
 		}()
 	}
+
+	tcpPool = net2.NewMultiConnectionPool(net2.ConnectionOptions{
+		MaxActiveConnections: int32(TCPMaxActive),
+		MaxIdleConnections:   uint32(TCPMaxIdle),
+		MaxIdleTime:          &TCPMaxTimeout,
+		DialMaxConcurrency:   TCPMaxNewConnections,
+		Dial:                 DialFunc,
+		ReadTimeout:          TCPtimeout,
+		WriteTimeout:         TCPtimeout,
+	})
 
 	for _, v := range flag.Args() {
 		var addr *net.UDPAddr
@@ -582,6 +615,10 @@ func main() {
 		if addr != nil {
 			udpAddr[v] = addr
 			hashRing.AddNode(Node{v, ""})
+			// Register the destination DNS:PORT combo in the TCP pool
+			if sendproto == "TCP" {
+				tcpPool.Register("tcp", v)
+			}
 		}
 	}
 
